@@ -23,7 +23,8 @@ SSH, which does not require placing GitHub credentials on the GPU server.
 From the repository root, using your chosen Python environment:
 
 ```bash
-python3 -m pip install -r scripts/data/requirements.txt
+source /etc/network_turbo
+python3 -m pip install --index-url https://pypi.org/simple -r scripts/data/requirements.txt
 mkdir -p /root/autodl-tmp/pusht
 nohup bash scripts/data/download_pusht.sh \
   --destination /root/autodl-tmp/pusht \
@@ -32,8 +33,10 @@ tail -f /root/autodl-tmp/pusht/download.log
 ```
 
 The wrapper runs `source /etc/network_turbo` before network requests. Set
-`DATA_PYTHON=/path/to/python` if Python is not on the SSH shell's PATH. Install
-dependencies before enabling the proxy; AutoDL notes that it can slow pip mirrors.
+`DATA_PYTHON=/path/to/python` if Python is not on the SSH shell's PATH, and use that
+interpreter for installation too. This instance required acceleration and the
+official PyPI index for installation; its default Aliyun index returned no packages.
+AutoDL notes that the proxy can slow other package mirrors.
 
 Progress appears every 15 seconds with bytes, percentage, speed, and estimated time.
 Rerun the same command after interruption to resume. A lock prevents concurrent
