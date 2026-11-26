@@ -77,7 +77,17 @@ def main():
 
     with (destination / ".download.lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        info = HfApi().dataset_info(REPO_ID, revision=args.revision, files_metadata=True, timeout=60)
+        for attempt in range(1, 6):
+            try:
+                info = HfApi().dataset_info(
+                    REPO_ID, revision=args.revision, files_metadata=True, timeout=60,
+                )
+                break
+            except Exception:
+                LOG.exception("Metadata lookup attempt %d failed", attempt)
+                if attempt == 5:
+                    raise
+                time.sleep(10 * attempt)
         entry = next(item for item in info.siblings if item.rfilename == FILENAME)
         if not entry.lfs or not entry.size:
             raise ValueError("Dataset metadata is missing its size or SHA-256")
