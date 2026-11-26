@@ -51,7 +51,11 @@ S1 median(update+data-wait) projected over30000 must fit half the24h cap; S2 ela
 model time plus projected remaining time must fit80%. Each peak GPU allocation
 must be below85% of its actual card capacity. S2 requires actual four-run overlap,
 cgroup working-set headroom, memory-event and CPU-throttling snapshots. Failed or
-missing evidence stops before S3. No batch/precision/worker/grid/budget fallback.
+missing evidence stops before S3. Recorded failed S1/S2 assessments latch the
+queue before phase entry on ordinary resume. Both failed and passed resource
+records stay immutable; passed evidence is reused only with unchanged bound queue/
+run identities and satisfied stage targets. No idle resampling, automatic reset
+or override is provided. No batch/precision/worker/grid/budget fallback.
 
 Preparation/status/explicit continuation use the same saved script:
 

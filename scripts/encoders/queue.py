@@ -10,6 +10,7 @@ import time
 from collections.abc import Callable
 from typing import TextIO
 from scripts.data.file_io import write_json_new
+from scripts.encoders.artifacts import identity_digest
 from scripts.encoders.capacity import assess_run, overlap_seconds, resource_snapshot
 from scripts.encoders.history import read_history, export_csv
 from scripts.encoders.interruptions import StopRequest
@@ -261,6 +262,48 @@ class QueueRunner:
             for entry in self.active.values():
                 entry["log"].close()
 
+    def _capacity_identity(self, targets: dict) -> str:
+        fields = (
+            "config_hash",
+            "code_revision",
+            "gpu_uuid",
+            "arm",
+            "rho",
+            "seed",
+            "max_updates",
+            "max_seconds",
+            "memory_limit_gib",
+        )
+        runs = {
+            run_id: {
+                **{key: self.store.run(run_id).get(key) for key in fields},
+                "restart_count": len(self.store.run(run_id).get("restarts", [])),
+            }
+            for run_id in targets
+        }
+        return identity_digest(
+            {"queue": self.store.state["identity"], "runs": runs, "targets": targets}
+        )
+
+    def _recorded_capacity(self, phase: str, targets: dict) -> int | None:
+        recorded = self.store.state["capacity"].get(phase)
+        if recorded is None:
+            return None
+        valid = (
+            recorded.get("passed") is True
+            and recorded.get("identity_digest") == self._capacity_identity(targets)
+            and all(
+                self.store.run(run_id)["state"] in ("paused", "completed")
+                and self.store.run(run_id)["completed_updates"] >= target
+                for run_id, target in targets.items()
+            )
+        )
+        self.store.event(
+            "recorded-capacity-reused" if valid else "recorded-capacity-blocked",
+            phase=phase,
+        )
+        return 0 if valid else 2
+
     def _capacity(self, phase: str, targets: dict, resources: dict) -> bool:
         reports = []
         checks = {}
@@ -309,6 +352,7 @@ class QueueRunner:
         )
         self.store.state["capacity"][phase] = {
             "passed": bool(passed),
+            "identity_digest": self._capacity_identity(targets),
             "runs": checks,
             "overlap_seconds": overlap,
             "resources": {**resources, "after": end, "oom_kill_delta": oom_delta},
@@ -324,6 +368,10 @@ class QueueRunner:
 
     def _phase(self, phase: str, stop: StopRequest) -> int:
         targets = self._targets(phase)
+        if phase in ("S1", "S2"):
+            recorded = self._recorded_capacity(phase, targets)
+            if recorded is not None:
+                return recorded
         failed = [
             run_id for run_id in targets if self.store.run(run_id)["state"] == "failed"
         ]
@@ -433,6 +481,18 @@ class QueueRunner:
     def run(self, stop: StopRequest | None = None) -> int:
         stop = stop if stop is not None else StopRequest()
         try:
+            for phase in ("S1", "S2"):
+                if self.store.state["capacity"].get(phase, {}).get("passed") is False:
+                    # A failed observed gate survives ordinary resume unchanged.
+                    # No phase entry, idle reassessment, retry or reset is allowed.
+                    self.store.event("capacity-failure-latched", phase=phase)
+                    return 2
+                recorded = self.store.state["capacity"].get(phase)
+                if recorded is not None and recorded.get(
+                    "identity_digest"
+                ) != self._capacity_identity(self._targets(phase)):
+                    self.store.event("recorded-capacity-identity-blocked", phase=phase)
+                    return 2
             while self.store.state["phase"] != "completed":
                 phase = self.store.state["phase"]
                 code = self._phase(phase, stop)
