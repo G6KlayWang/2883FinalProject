@@ -1,0 +1,21 @@
+# Local agent configuration and credentials
+AGENTS.md
+.claude/
+.claude-flow/
+.env
+.env.*
+connection*.json
+*.pem
+
+# Python environments and generated artifacts
+__pycache__/
+*.py[cod]
+.venv/
+.cache/
+/data/
+logs/
+checkpoints/
+*.h5
+*.h5.zst
+*.incomplete
+*.bundle
