@@ -7,9 +7,10 @@ it fits. Allow additional space before extracting or caching encoder features.
 
 ## Design and implementation plan
 
-Use Hugging Face's resumable HTTP client, pin each download to a dataset commit,
+Use Hugging Face's resumable client, pin each download to a dataset commit,
 then check file size and the published SHA-256. HTTP makes partial-file byte counts
-observable; Xet is disabled for this workflow. Save provenance in a JSON manifest.
+observable; optional Xet mode uses parallel transfers and the client's progress bar.
+Save provenance in a JSON manifest.
 Keep credentials and data outside Git. Sync committed code using a Git bundle over
 SSH, which does not require placing GitHub credentials on the GPU server.
 
@@ -39,6 +40,9 @@ official PyPI index for installation; its default Aliyun index returned no packa
 AutoDL notes that the proxy can slow other package mirrors.
 
 Progress appears every 15 seconds with bytes, percentage, speed, and estimated time.
+Add `--transport xet` for Hugging Face's high-performance parallel transfer mode.
+In Xet mode, read progress from the client's log, not the preallocated file size.
+Use a fresh destination when changing transport with an incomplete download.
 Rerun the same command after interruption to resume. A lock prevents concurrent
 downloads to the same destination. Success requires a `VERIFIED` log line and
 `download_manifest.json`, containing the source revision, code commit, size, and

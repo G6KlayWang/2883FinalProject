@@ -59,14 +59,17 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--destination", type=Path, default=Path("/root/autodl-tmp/pusht"))
     parser.add_argument("--revision", default="main")
+    parser.add_argument("--transport", choices=("http", "xet"), default="http")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     destination = args.destination.resolve()
     destination.mkdir(parents=True, exist_ok=True)
 
-    # Import only after setting these: HTTP supports resumable, visible byte counts.
-    os.environ["HF_HUB_DISABLE_XET"] = "1"
-    os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
+    # Xet reports received bytes itself; its preallocated file size is not progress.
+    os.environ["HF_HUB_DISABLE_XET"] = "1" if args.transport == "http" else "0"
+    os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1" if args.transport == "http" else "0"
+    os.environ.setdefault("HF_XET_HIGH_PERFORMANCE", "1")
+    os.environ.setdefault("TQDM_MININTERVAL", "15")
     os.environ.setdefault("HF_HOME", str(destination / ".hf-home"))
     os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "120")
     from huggingface_hub import HfApi, hf_hub_download
@@ -74,7 +77,7 @@ def main():
 
     with (destination / ".download.lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        info = HfApi().dataset_info(REPO_ID, revision=args.revision, files_metadata=True)
+        info = HfApi().dataset_info(REPO_ID, revision=args.revision, files_metadata=True, timeout=60)
         entry = next(item for item in info.siblings if item.rfilename == FILENAME)
         if not entry.lfs or not entry.size:
             raise ValueError("Dataset metadata is missing its size or SHA-256")
@@ -89,7 +92,10 @@ def main():
 
         stop = threading.Event()
         monitor = threading.Thread(target=progress, args=(destination, entry.size, stop), daemon=True)
-        monitor.start()
+        if args.transport == "http":
+            monitor.start()
+        else:
+            LOG.info("Using Xet parallel transfer; progress comes from the Hugging Face client")
         try:
             for attempt in range(1, 6):
                 try:
@@ -105,7 +111,8 @@ def main():
                     time.sleep(10 * attempt)
         finally:
             stop.set()
-            monitor.join()
+            if monitor.is_alive():
+                monitor.join()
 
         LOG.info("Download finished; verifying all bytes against the published SHA-256")
         digest = verify_file(path, entry.size, expected_sha256)
@@ -117,7 +124,8 @@ def main():
         manifest = {
             "repo_id": REPO_ID, "dataset_revision": info.sha,
             "filename": FILENAME, "size_bytes": entry.size, "sha256": digest,
-            "code_revision": code_revision, "verified_at_utc": time.strftime(
+            "code_revision": code_revision, "transport": args.transport,
+            "verified_at_utc": time.strftime(
                 "%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
         temporary = destination / "download_manifest.json.tmp"
