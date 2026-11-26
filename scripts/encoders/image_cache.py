@@ -1,6 +1,7 @@
 """Shared, immutable resized uint8 image mmap cache with exact reviewed resize parity."""
 
 import argparse
+from collections.abc import Callable, Iterator
 import hashlib
 import json
 import os
@@ -8,13 +9,41 @@ from pathlib import Path
 import shutil
 import numpy as np
 from scripts.data.file_io import sha256_file, write_json_new
-from scripts.data.loader import PreparedData
+from scripts.data.loader import PreparedData, resize_rgb
 from scripts.encoders.artifacts import new_directory
 from scripts.encoders.frames import ImageFrames
 
 
+def iter_resized_images(frames: ImageFrames) -> Iterator[np.ndarray]:
+    """Reuse one decoded pixel chunk, preserving the exact reviewed ID/resize order."""
+    prepared = frames.raw.prepared
+    episodes = prepared.manifest["episodes"]
+    with prepared._open() as handle:
+        pixels = handle["pixels"]
+        bytes_per_row = int(np.prod(pixels.shape[1:])) * pixels.dtype.itemsize
+        chunk_rows = (
+            pixels.chunks[0]
+            if pixels.chunks
+            else max(1, min(256, 64 * 1024**2 // bytes_per_row))
+        )
+        if chunk_rows * bytes_per_row > 64 * 1024**2:
+            raise ValueError("Source pixel chunk exceeds the64MiB decoded-cache bound")
+        chunk_start, decoded = -1, None
+        for episode_id, local_frame in frames.ids:
+            row = episodes[int(episode_id)]["offset"] + int(local_frame)
+            start = row // chunk_rows * chunk_rows
+            if start != chunk_start:
+                decoded = pixels[start : min(start + chunk_rows, len(pixels))]
+                chunk_start = start
+            yield resize_rgb(decoded[row - start])
+
+
 def build_image_cache(
-    frames: ImageFrames, output: Path, *, reserve_gib: float = 40.0
+    frames: ImageFrames,
+    output: Path,
+    *,
+    reserve_gib: float = 40.0,
+    progress: Callable[[int, int], None] | None = None,
 ) -> None:
     if not len(frames):
         raise ValueError("Cannot cache an empty frame population")
@@ -30,11 +59,13 @@ def build_image_cache(
             dtype="uint8",
             shape=(len(frames), 96, 96, 3),
         )
-        for index in range(len(frames)):
+        if progress:
+            progress(0, len(frames))
+        for index, image in enumerate(iter_resized_images(frames)):
             # Reviewed Pillow output is uint8 before /255. Round-trip is exact.
-            images[index] = np.rint(frames[index].transpose(1, 2, 0) * 255).astype(
-                np.uint8
-            )
+            images[index] = np.rint(image.transpose(1, 2, 0) * 255).astype(np.uint8)
+            if progress and ((index + 1) % 64 == 0 or index + 1 == len(frames)):
+                progress(index + 1, len(frames))
         images.flush()
         del images
         np.save(temporary / "ids.npy", frames.ids, allow_pickle=False)

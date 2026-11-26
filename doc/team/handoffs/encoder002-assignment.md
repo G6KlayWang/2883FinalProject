@@ -6,7 +6,7 @@ The user explicitly requests (1) a shell script to start training with one comma
 
 The preceding implementation and Arm A diagnostic passed both reviewers and merged as main `30c5b69d3542ef07b96fe36b7334dd9d3965b627`; reviewed implementation is `089b079`. Start a fresh feature worktree from verified merged main. The original repository and prior worktrees remain preserved.
 
-The saved `production-proposed.json` is the concrete recommended recipe. A single user recipe question is pending in the orchestrator session; independent implementation proceeds immediately. Do not treat elapsed time, an agent recommendation, or the full-training request as an answer to that recipe question. Record the actual answer before changing policy statuses and launching dependent production runs. No repeat permission question for already-authorized implementation, necessary setup, cache preparation, version sync, or full training once the recipe is settled.
+**Recipe approved:** after the orchestrator presented the saved recommended recipe and linked `scripts/encoders/configs/production-proposed.json` at reviewed implementation `089b079`, the user explicitly answered **“Use the recommendation recipe”**. This approves the stated thirteen-run design, phase-0 frames, batch512/30,000 updates, AdamW schedule, A/B/C grids, common-normalized A′ lambda0.05, strict FP32/TF32 off, one run per GPU, documented eligibility/C-whitening/validation-probe rules, and all remaining numerical settings in that linked configuration. Keep its values unchanged when creating the executable approved configuration; record approval provenance and change only approval-status labels as needed. No elapsed-time inference or further recipe permission question is needed. Necessary implementation, setup, cache preparation, version sync, capacity validation and full encoder launch are authorized. Do not silently extend grids/budgets or alter settings on failure.
 
 ## Design and implementation
 
@@ -20,6 +20,12 @@ Implement a resumable queue for the documented ten first-seed candidates, up to 
 
 Use the reviewed resized uint8 cache for the approved frame population; validate it and share it read-only. Plan train/validation caching and downstream evaluation within disk/RAM reserves; avoid duplicate full-file checks and competing cache builds. Capacity validation is part of the authorized launch: prefer a bounded initial segment of the first real production run with exact checkpoint continuation, so its steps count toward the original 30,000. If the approved batch cannot run or resource limits fail, stop and report rather than change batch, precision, regularizers or accumulate gradients silently. Do not infer four-job throughput from the batch-16 smoke.
 
+### Recorded capacity staging decision
+
+After the Research Reviewer's launch checklist, the orchestrator selected: S1 runs real `A-rho2.5-seed0` alone to update 200; S2 resumes that same run to 400 while real `B-rho2.5-seed0`, `C-rho0.25-seed0`, and A′ each run to 200 concurrently; S3 resumes those same checkpoints toward 30,000 and schedules the other six first-seed candidates. All steps count toward each original budget. Preserve the exact approved config, code/environment, output directory and original GPU UUID on continuation. This supersedes the initial 20-step capacity suggestion for ENCODER-002 only.
+
+Capacity boundaries and display/queue controls live outside RunConfig. Use a 20-minute capacity watchdog after trainer startup/source/cache verification, with preparation separately timed. Stop through graceful SIGINT/SIGTERM at an update boundary and save a consistent checkpoint; no automatic SIGKILL, rollback, reset or restart. Report non-graceful failure for coordinator disposition. Check actual multi-job overlap, steady timing and resource headroom before S3; an issued launch is not evidence of four-job capacity. Keep the approved per-run 86,400-second model cap unchanged. Build the training cache first; validation cache can follow capacity checks without competing with active preparation/training.
+
 ## Team workflow
 
 1. GitHub manager: verify live main, prepare fresh `feat/encoder-launcher` worktree, hand ownership to Executor; own all commits/PR/sync identity checks.
@@ -30,3 +36,7 @@ Use the reviewed resized uint8 cache for the approved frame population; validate
 6. Orchestrator: communicate the actual recipe decision, route findings, and report actual run progress/paths rather than launch intention. Full training may take hours; the immediate task milestone is a verified healthy full-training launch with visible progress and durable history, not a claim all thirteen runs have finished.
 
 At most three workers actively working simultaneously; idle persistent sessions do not count. Use existing Herdr aliases. Keep handoffs/reviews under `doc/team/`; generated data, logs, figures and checkpoints stay ignored or on the server. User credentials must never enter source or messages.
+
+## User testing constraint
+
+The user explicitly says: “No need for too much testing, only keep the necessary ones. As previous PR has already tested a lot.” Reuse the merged 119-test and GPU-smoke evidence. Do not rerun unchanged data, loss or probe suites, repeat full suites at every handoff, or add tests for low-impact cosmetic changes. Verify changed launch/progress/cache/interruption paths with focused tests, reuse completed targeted evidence in reviews, and add regressions only for concrete uncovered defects. Server capacity stages are actual approved production steps, not additional throwaway tests. Source/config identity, resource checks and actual observed launch evidence remain necessary. This instruction takes precedence over generic skill recommendations for repeated full-suite runs.

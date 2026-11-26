@@ -1,0 +1,10 @@
+{
+  "decision": "Use the recommendation recipe",
+  "recorded_date": "2026-11-26",
+  "authority": "Actual user answer relayed by orchestrator t1c; original doc/team/handoffs/encoder002-assignment.md",
+  "reference_implementation": "089b0790d7e8c636a0b7d2409e27c99f2e671aac",
+  "reference_raw_sha256": "0809df674b7eee3735c20b44d36a4294e31c62048de1f3b583094c954eb24be4",
+  "reference_resolved_sha256": "4863ece10ab1ec45ed582d4a035715991f06a4570b8ff1fb4c8da13949ff9833",
+  "changes": "Approval status labels only; no numeric/scientific control changes",
+  "scope": "13 encoder runs:10 candidates plus3 selected repeats; merge separate; no DF/planner"
+}

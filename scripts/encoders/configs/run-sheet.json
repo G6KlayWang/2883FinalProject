@@ -1,15 +1,7 @@
 {
-  "status": "proposed-not-authorized",
-  "base_config": "production-proposed.json",
-  "open_choices": [
-    "frame/window policy",
-    "grids/optimizer recipe",
-    "Aprime convention",
-    "eligibility/C whitening",
-    "probe/score/mask/ties",
-    "TF32",
-    "shared augmentation/view forwarding"
-  ],
+  "status": "approved-recipe-awaits-reviewed-launch",
+  "base_config": "production-approved.json",
+  "open_choices": [],
   "slots": 4,
   "workers_per_job": 4,
   "intraop_threads_per_job": 2,
@@ -23,7 +15,7 @@
       "rho": 2.5,
       "seed": 0,
       "stage": "candidate",
-      "status": "proposed",
+      "status": "approved",
       "queue_position": 0
     },
     {
@@ -32,7 +24,7 @@
       "rho": 2.5,
       "seed": 0,
       "stage": "candidate",
-      "status": "proposed",
+      "status": "approved",
       "queue_position": 1
     },
     {
@@ -41,7 +33,7 @@
       "rho": 0.25,
       "seed": 0,
       "stage": "candidate",
-      "status": "proposed",
+      "status": "approved",
       "queue_position": 2
     },
     {
@@ -50,7 +42,7 @@
       "rho": 0.2105263157894737,
       "seed": 0,
       "stage": "candidate",
-      "status": "proposed",
+      "status": "approved",
       "queue_position": 3
     },
     {
@@ -59,7 +51,7 @@
       "rho": 10.0,
       "seed": 0,
       "stage": "candidate",
-      "status": "proposed",
+      "status": "approved",
       "queue_position": 4
     },
     {
@@ -68,7 +60,7 @@
       "rho": 1.0,
       "seed": 0,
       "stage": "candidate",
-      "status": "proposed",
+      "status": "approved",
       "queue_position": 5
     },
     {
@@ -77,7 +69,7 @@
       "rho": 10.0,
       "seed": 0,
       "stage": "candidate",
-      "status": "proposed",
+      "status": "approved",
       "queue_position": 6
     },
     {
@@ -86,7 +78,7 @@
       "rho": 40.0,
       "seed": 0,
       "stage": "candidate",
-      "status": "proposed",
+      "status": "approved",
       "queue_position": 7
     },
     {
@@ -95,7 +87,7 @@
       "rho": 4.0,
       "seed": 0,
       "stage": "candidate",
-      "status": "proposed",
+      "status": "approved",
       "queue_position": 8
     },
     {
@@ -104,7 +96,7 @@
       "rho": 40.0,
       "seed": 0,
       "stage": "candidate",
-      "status": "proposed",
+      "status": "approved",
       "queue_position": 9
     },
     {
@@ -131,5 +123,6 @@
       "stage": "repeat",
       "status": "awaits-validation-selection"
     }
-  ]
+  ],
+  "recipe_approval": "recipe-approval.json"
 }

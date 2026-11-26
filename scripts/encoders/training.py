@@ -2,6 +2,8 @@
 
 import json
 import math
+import os
+from collections.abc import Callable
 from pathlib import Path
 import time
 import torch
@@ -175,6 +177,8 @@ class Trainer:
     def _checkpoint(self) -> Path:
         prefix = "diagnostic-" if self.config.profile == "smoke" else ""
         path = self.output / f"{prefix}step-{self.completed_updates:06d}.pt"
+        if self.last_checkpoint_name == path.name:
+            return path
         save_checkpoint(
             path,
             {
@@ -284,7 +288,14 @@ class Trainer:
             **kwargs,
         )
 
-    def run(self, frames, *, stop_at: int) -> Path:
+    def run(
+        self,
+        frames,
+        *,
+        stop_at: int,
+        observer: Callable[[dict], None] | None = None,
+        should_stop: Callable[[], bool] | None = None,
+    ) -> Path:
         if self.attempted_updates != self.completed_updates:
             raise ValueError(
                 "An attempted update is unresolved; no automatic retry is permitted"
@@ -318,6 +329,9 @@ class Trainer:
         try:
             with model_time_limit(self.config.runtime.max_seconds - initial_seconds):
                 for batch in loader:
+                    if should_stop is not None and should_stop():
+                        last_checkpoint = self._checkpoint()
+                        break
                     check_resources(self.output, self.config.runtime)
                     if self.attempted_updates >= self.config.optimizer.max_updates:
                         raise ValueError("Lifetime attempted update budget exhausted")
@@ -337,14 +351,42 @@ class Trainer:
                         update_seconds=time.monotonic() - step_started,
                         data_wait_seconds=data_wait_seconds,
                     )
+                    cycle_seconds = metrics["update_seconds"] + data_wait_seconds
+                    metrics.update(
+                        source_frames_per_second=self.config.optimizer.batch_size
+                        / max(cycle_seconds, 1e-12),
+                        gpu_memory_allocated_bytes=(
+                            torch.cuda.memory_allocated(self.device)
+                            if self.device.type == "cuda"
+                            else None
+                        ),
+                        gpu_memory_reserved_bytes=(
+                            torch.cuda.memory_reserved(self.device)
+                            if self.device.type == "cuda"
+                            else None
+                        ),
+                        peak_gpu_memory_allocated_bytes=(
+                            torch.cuda.max_memory_allocated(self.device)
+                            if self.device.type == "cuda"
+                            else None
+                        ),
+                    )
                     with (self.output / "metrics.jsonl").open("a") as log:
                         log.write(json.dumps(metrics, allow_nan=False) + "\n")
+                        log.flush()
+                        os.fsync(log.fileno())
+                    stop_requested = should_stop is not None and should_stop()
                     if (
                         self.completed_updates % self.config.runtime.checkpoint_every
                         == 0
                         or self.completed_updates == stop_at
+                        or stop_requested
                     ):
                         last_checkpoint = self._checkpoint()
+                    if observer is not None:
+                        observer(metrics)
+                    if stop_requested:
+                        break
                     waiting_since = time.monotonic()
         finally:
             self.model_seconds = initial_seconds + time.monotonic() - started
