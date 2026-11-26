@@ -27,6 +27,7 @@ class ConfigModelTests(unittest.TestCase):
             "aprime_convention",
             "tf32_matmul",
             "gate",
+            "c_transform",
             "probe",
             "grids",
         ):
@@ -48,6 +49,18 @@ class ConfigModelTests(unittest.TestCase):
         proposed.update(profile="production", recipe_status="proposed")
         with self.assertRaisesRegex(ValueError, "approval"):
             config.RunConfig.from_dict(proposed).require_execution_approval()
+
+    def test_c_policy_requires_its_own_approval_even_when_gate_is_disabled(self):
+        config = implementation("config")
+        value = run_config_dict()
+        value.update(profile="production", recipe_status="approved")
+        for block in ("grids", "gate", "probe"):
+            value[block]["status"] = "approved"
+        value["gate"]["enabled"] = False
+        with self.assertRaisesRegex(ValueError, "approval"):
+            config.RunConfig.from_dict(value).require_execution_approval()
+        value["c_transform"]["status"] = "approved"
+        config.RunConfig.from_dict(value).require_execution_approval()
 
     def test_run_matrix_has_ten_candidates_and_three_selected_repeats(self):
         config = implementation("config")
@@ -85,3 +98,21 @@ class ConfigModelTests(unittest.TestCase):
             ),
             0,
         )
+
+    def test_production_requires_shared_grids_and_declared_weights_and_seeds(self):
+        config = implementation("config")
+        original = run_config_dict()
+        original.update(profile="production", recipe_status="proposed")
+        unequal = copy.deepcopy(original)
+        unequal["grids"]["B"] = [1.0, 10.0, 40.0]
+        with self.assertRaisesRegex(ValueError, "A/B|equal|shared"):
+            config.RunConfig.from_dict(unequal)
+        for changes in (
+            {"rho": 7.0},
+            {"seed": 2},
+            {"arm": "Aprime", "rho": 4 * 0.05 / 0.95, "seed": 1},
+        ):
+            with self.subTest(changes=changes), self.assertRaisesRegex(
+                ValueError, "grid|seed|repeat"
+            ):
+                config.RunConfig.from_dict({**original, **changes})

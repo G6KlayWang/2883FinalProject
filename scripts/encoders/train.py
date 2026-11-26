@@ -1,7 +1,6 @@
 """Single-GPU training/resume entrypoint; smoke and proposed production stay separate."""
 
 import argparse
-from dataclasses import replace
 import fcntl
 import json
 import logging
@@ -10,11 +9,16 @@ import time
 import torch
 from scripts.data.file_io import sha256_file, write_json_new
 from scripts.encoders.checkpoints import parameter_digest, replace_json
-from scripts.encoders.config import load_config, run_matrix
+from scripts.encoders.config import load_config
+from scripts.encoders.runs import resolve_run
 from scripts.encoders.environment import environment_record
 from scripts.encoders.inputs import open_images
 from scripts.encoders.model import build_encoder
-from scripts.encoders.runtime import configure_process, require_single_gpu
+from scripts.encoders.runtime import (
+    configure_process,
+    require_single_gpu,
+    runtime_record,
+)
 from scripts.encoders.training import Trainer
 
 
@@ -31,25 +35,22 @@ def main() -> None:
     parser.add_argument(
         "--candidate", help="Declared first-seed run_id from the fixed run matrix"
     )
+    parser.add_argument(
+        "--selection-report",
+        type=Path,
+        help="Approved selection receipt for a generated seed1 config",
+    )
     args = parser.parse_args()
     logging.basicConfig(
         level=logging.DEBUG, format="%(asctime)s %(levelname)s %(message)s"
     )
     config = load_config(args.config)
-    if args.candidate:
-        rows = [
-            r
-            for r in run_matrix(config.grids, config.native_lambda)
-            if r["run_id"] == args.candidate and r["stage"] == "candidate"
-        ]
-        if not rows:
-            raise ValueError(
-                "Unknown candidate; selected repeat configs require the selection tool"
-            )
-        config = replace(
-            config, arm=rows[0]["arm"], rho=rows[0]["rho"], seed=rows[0]["seed"]
-        )
-        config.validate()
+    selection_report = (
+        json.loads(args.selection_report.read_text()) if args.selection_report else None
+    )
+    config, declaration = resolve_run(
+        config, candidate=args.candidate, selection_report=selection_report
+    )
     stop_at = config.stop_update(args.stop_at)
     config.require_execution_approval()
     if config.profile == "smoke" and not args.output.name.startswith("diagnostic-"):
@@ -69,6 +70,11 @@ def main() -> None:
         )
         identity = {
             "code_revision": args.code_revision,
+            "run_declaration": declaration,
+            "runtime_controls": runtime_record(),
+            "selection_report_sha256": (
+                sha256_file(args.selection_report) if args.selection_report else None
+            ),
             "manifest_sha256": sha256_file(args.manifest),
             "images": frames.identity,
             "environment": environment_record(),

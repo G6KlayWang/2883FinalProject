@@ -11,6 +11,7 @@ from scripts.data.file_io import sha256_file, write_json_new
 from scripts.encoders.artifacts import new_directory
 from scripts.encoders.feature_cache import FeatureCache
 from scripts.encoders.measure import feature_statistics
+from scripts.encoders.rng import keyed_seed
 
 
 def _batch(frames, start: int, size: int, device: str) -> torch.Tensor:
@@ -100,14 +101,17 @@ def extract_features(
 
 
 def train_mode_comparison(
-    model: nn.Module, frames, *, batch_size: int, device: str
+    model: nn.Module, frames, *, batch_size: int, device: str, seed: int
 ) -> dict:
-    """Fixed first two full batches; train mode only touches independent copies."""
+    """Seeded population rows in full batches; only independent copies are mutated."""
     count = min(2, len(frames) // batch_size) * batch_size
     if count < 2:
         raise ValueError(
             "Train-mode diagnostic needs at least one full batch of two images"
         )
+    generator = torch.Generator().manual_seed(keyed_seed(seed, "batchnorm-diagnostic"))
+    indices = torch.randperm(len(frames), generator=generator)[:count].tolist()
+    row_digest = hashlib.sha256(frames.ids[indices].astype("<i8").tobytes()).hexdigest()
     before = {name: value.clone() for name, value in model.state_dict().items()}
     reports = {}
     for mode in ("eval", "train"):
@@ -117,13 +121,24 @@ def train_mode_comparison(
         with torch.inference_mode():
             for start in range(0, count, batch_size):
                 collected.append(
-                    disposable(_batch(frames, start, batch_size, device)).cpu().numpy()
+                    disposable(
+                        torch.from_numpy(
+                            np.stack(
+                                [frames[i] for i in indices[start : start + batch_size]]
+                            )
+                        ).to(device)
+                    )
+                    .cpu()
+                    .numpy()
                 )
         reports[mode] = feature_statistics(np.concatenate(collected))
         del disposable
     _assert_unchanged(before, model)
     return {
         "scope": "sampled-disposable-model-copy",
+        "selection": "seeded-without-replacement-full-population-v1",
+        "selection_seed": seed,
+        "row_digest": row_digest,
         "count": count,
         "batch_size": batch_size,
         "clean_eval_statistics": reports["eval"],

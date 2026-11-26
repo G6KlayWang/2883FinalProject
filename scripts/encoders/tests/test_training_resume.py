@@ -165,7 +165,7 @@ class TrainingTests(unittest.TestCase):
                 .splitlines()
             ]
             self.assertTrue(all(row["gradient_norm"] > 0 for row in metrics))
-            self.assertIn("regularizer_gradient_norm", metrics[0])
+            self.assertIn("regularizer_unweighted_gradient_norm", metrics[0])
 
     def test_smoke_population_caps_and_failed_update_cannot_be_retried(self):
         training = implementation("training")

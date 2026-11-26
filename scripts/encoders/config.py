@@ -117,6 +117,7 @@ class RunConfig:
     runtime: RuntimeConfig
     grids: dict[str, Any]
     gate: dict[str, Any]
+    c_transform: dict[str, Any]
     probe: dict[str, Any]
 
     @classmethod
@@ -174,17 +175,18 @@ class RunConfig:
             self.rho, 4 * self.native_lambda / (1 - self.native_lambda)
         ):
             raise ValueError("A-prime rho must equal4*lambda/(1-lambda)")
-        for name in ("grids", "gate", "probe"):
+        for name in ("grids", "gate", "c_transform", "probe"):
             block = getattr(self, name)
             if not isinstance(block, dict) or block.get("status") not in (
                 "proposed",
                 "approved",
             ):
                 raise ValueError(f"{name}.status must be explicit proposed/approved")
-        from scripts.encoders.gate import GatePolicy
+        from scripts.encoders.gate import GatePolicy, CTransformPolicy
         from scripts.encoders.probes import ProbePolicy
 
         GatePolicy.from_dict(self.gate)
+        CTransformPolicy.from_dict(self.c_transform)
         ProbePolicy.from_dict(self.probe)
         validate_fields(self.grids, {"status", "A", "B", "C"}, "grids")
         for arm in ("A", "B", "C"):
@@ -195,6 +197,15 @@ class RunConfig:
                 _positive(weight, f"grids.{arm}")
             if weights != sorted(set(weights)):
                 raise ValueError(f"grids.{arm} must be increasing and unique")
+        if self.grids["A"] != self.grids["B"]:
+            raise ValueError("A/B must share equal regularizer weight grids")
+        if self.profile == "production":
+            if self.seed not in (0, 1) or (self.arm == "Aprime" and self.seed != 0):
+                raise ValueError(
+                    "Production permits seed0 candidates and A/B/C seed1 repeats only"
+                )
+            if self.arm != "Aprime" and self.rho not in self.grids[self.arm]:
+                raise ValueError("Production weight must belong to its declared grid")
         validate_augmentation(self.augment)
         if self.profile == "smoke":
             self._validate_smoke()
@@ -225,7 +236,7 @@ class RunConfig:
             )
         if self.profile == "production" and any(
             getattr(self, name)["status"] != "approved"
-            for name in ("grids", "gate", "probe")
+            for name in ("grids", "gate", "c_transform", "probe")
         ):
             raise ValueError("Production scientific policies require recorded approval")
 

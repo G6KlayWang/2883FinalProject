@@ -6,7 +6,7 @@ import math
 from pathlib import Path
 import numpy as np
 from scripts.data.file_io import write_json_new
-from scripts.encoders.config import load_config, shared_training_controls
+from scripts.encoders.config import RunConfig, load_config, shared_training_controls
 from scripts.data.families import require_fields
 from scripts.encoders.artifacts import identity_digest
 from scripts.encoders.probes import ProbePolicy
@@ -170,6 +170,7 @@ def select_all(records: list[dict], config) -> dict:
         if (
             protocol.get("probe_policy") != config.probe
             or protocol.get("gate_policy") != config.gate
+            or protocol.get("c_transform_policy") != config.c_transform
         ):
             raise ValueError(
                 "Candidate probe/gate protocol differs from selection configuration"
@@ -190,8 +191,11 @@ def select_all(records: list[dict], config) -> dict:
     a_kurt = selected["A"]["gate"]["median_coordinate_kurtosis"]
     b_kurt = selected["B"]["gate"]["median_coordinate_kurtosis"]
     heavier = a_kurt is not None and b_kurt is not None and b_kurt > a_kurt
-    approved = config.recipe_status == "approved" and all(
-        r["selection_status"] == "approved-policy" for r in selected.values()
+    approved = (
+        config.recipe_status == "approved"
+        and config.c_transform["status"] == "approved"
+        and config.grids["status"] == "approved"
+        and all(r["selection_status"] == "approved-policy" for r in selected.values())
     )
     return {
         "selected": selected,
@@ -201,6 +205,30 @@ def select_all(records: list[dict], config) -> dict:
         "status": "approved-policy" if approved else "provisional-policy",
         "scope": "No DF launch; no grid extension; test/planning outcomes excluded",
     }
+
+
+def write_repeat_configs(report: dict, config: RunConfig, output: Path) -> dict:
+    """Publish exactly three repeat configs and bind their hashes in the receipt."""
+    from dataclasses import replace
+    from scripts.encoders.artifacts import new_directory
+    from scripts.encoders.runs import resolve_run
+
+    config.require_execution_approval()
+    if report.get("status") != "approved-policy":
+        raise ValueError("Provisional selection cannot materialize production repeats")
+    repeats = {
+        arm: replace(config, arm=arm, rho=report["selected"][arm]["rho"], seed=1)
+        for arm in ("A", "B", "C")
+    }
+    receipt = {
+        **report,
+        "repeat_config_hashes": {arm: run.digest() for arm, run in repeats.items()},
+    }
+    with new_directory(output) as temporary:
+        for arm, repeat in repeats.items():
+            resolve_run(repeat, candidate=None, selection_report=receipt)
+            write_json_new(temporary / f"{arm}-selected-seed1.json", repeat.to_dict())
+    return receipt
 
 
 def main() -> None:
@@ -214,21 +242,7 @@ def main() -> None:
     records = [json.loads(path.read_text()) for path in args.records]
     report = select_all(records, config)
     if args.repeat_config_directory:
-        if report["status"] != "approved-policy":
-            raise ValueError(
-                "Provisional recommendations cannot materialize production repeat configs"
-            )
-        from dataclasses import replace
-        from scripts.encoders.artifacts import new_directory
-
-        with new_directory(args.repeat_config_directory) as temporary:
-            for arm, record in report["selected"].items():
-                repeat = replace(config, arm=arm, rho=record["rho"], seed=1)
-                repeat.validate()
-                repeat.require_execution_approval()
-                write_json_new(
-                    temporary / f"{arm}-selected-seed1.json", repeat.to_dict()
-                )
+        report = write_repeat_configs(report, config, args.repeat_config_directory)
     write_json_new(args.output, report)
 
 

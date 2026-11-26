@@ -139,8 +139,6 @@ def encoder_loss(
         raise ValueError(f"Unknown encoder arm {arm!r}")
     total = invariance + rho * regularizer
     if arm == "Aprime":
-        if aprime_convention not in ("common", "native"):
-            raise ValueError("A-prime convention must be common or native")
         if aprime_convention == "native":
             total = total * (1 - native_lambda) / 4
     return {**terms, "regularizer": regularizer, "total": total}

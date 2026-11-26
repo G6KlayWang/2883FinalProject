@@ -56,12 +56,59 @@ def check_resources(output: Path, settings: RuntimeConfig) -> None:
         raise OSError(
             "Disk reserve violated; stop rather than changing experiment settings"
         )
-    memory = Path("/sys/fs/cgroup/memory.current")
-    if (
-        memory.exists()
-        and int(memory.read_text()) > settings.memory_limit_gib * 1024**3
-    ):
-        raise MemoryError("Configured aggregate cgroup memory guard exceeded")
+    usage = memory_usage()
+    if usage is None:
+        return
+    if usage["working_set_bytes"] > settings.memory_limit_gib * 1024**3:
+        raise MemoryError(f"Configured memory working-set guard exceeded: {usage}")
+    limit = usage["actual_limit_bytes"]
+    if limit is not None and usage["current_bytes"] >= 0.95 * limit:
+        raise MemoryError(
+            f"Conservative actual cgroup limit guard reached (95%): {usage}"
+        )
+
+
+def memory_usage(cgroup: Path = Path("/sys/fs/cgroup")) -> dict | None:
+    """cgroupv2 working set excludes reclaimable inactive_file; fallback is raw."""
+    current_path = cgroup / "memory.current"
+    if not current_path.exists():
+        return None
+    current = int(current_path.read_text())
+    stats_path = cgroup / "memory.stat"
+    stats = (
+        dict(line.split() for line in stats_path.read_text().splitlines())
+        if stats_path.exists()
+        else {}
+    )
+    inactive = int(stats["inactive_file"]) if "inactive_file" in stats else 0
+    limit_path = cgroup / "memory.max"
+    limit = limit_path.read_text().strip() if limit_path.exists() else "max"
+    return {
+        "current_bytes": current,
+        "inactive_file_bytes": inactive,
+        "working_set_bytes": max(0, current - inactive),
+        "actual_limit_bytes": None if limit == "max" else int(limit),
+        "accounting": (
+            "current-minus-inactive_file"
+            if "inactive_file" in stats
+            else "current-fallback"
+        ),
+    }
+
+
+def runtime_record() -> dict:
+    """Record effective backend flags, rather than relying on implicit defaults."""
+    return {
+        "deterministic_algorithms": torch.are_deterministic_algorithms_enabled(),
+        "deterministic_warn_only": torch.is_deterministic_algorithms_warn_only_enabled(),
+        "cudnn_deterministic": torch.backends.cudnn.deterministic,
+        "cudnn_benchmark": torch.backends.cudnn.benchmark,
+        "matmul_tf32": torch.backends.cuda.matmul.allow_tf32,
+        "cudnn_tf32": torch.backends.cudnn.allow_tf32,
+        "float32_matmul_precision": torch.get_float32_matmul_precision(),
+        "cublas_workspace_config": os.environ.get("CUBLAS_WORKSPACE_CONFIG"),
+        "memory_guard": "working_set=current-inactive_file; fallback=current; raw95%-actual-limit-stop",
+    }
 
 
 @contextmanager

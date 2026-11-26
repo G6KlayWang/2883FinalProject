@@ -83,6 +83,7 @@ def evaluate_candidate(
         train.features,
         config.arm,
         config.gate,
+        c_policy=config.c_transform,
         split="train",
         checkpoint_role=train.identity["checkpoint_role"],
     )
@@ -113,6 +114,7 @@ def evaluate_candidate(
         "validation_rows": validation.identity["row_digest"],
         "probe_policy": config.probe,
         "gate_policy": config.gate,
+        "c_transform_policy": config.c_transform,
         "selection": "equal-three-normalized-group-validation-MLP-final-epoch-v1",
     }
     with new_directory(output) as temporary:
@@ -173,6 +175,7 @@ def evaluate_candidate(
             "score_split": "validation",
             "eligible": gate["eligible"],
             "gate_policy_status": config.gate["status"],
+            "c_transform_policy_status": config.c_transform["status"],
             "gate": gate,
             "protocol_digest": identity_digest(protocol),
             "protocol": protocol,

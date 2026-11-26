@@ -69,7 +69,14 @@ def run_config_dict():
             "eigenvalue_max": 2.0,
             "gaussian_kurtosis_limit": 0.5,
             "laplace_kurtosis_min": 1.5,
-            "zca_eigenvalue_floor": 0.05,
+        },
+        "c_transform": {
+            "status": "proposed",
+            "mode": "if_moments_fail",
+            "mean_limit": 0.1,
+            "eigenvalue_min": 0.5,
+            "eigenvalue_max": 2.0,
+            "eigenvalue_floor": 0.05,
         },
         "probe": {
             "status": "proposed",

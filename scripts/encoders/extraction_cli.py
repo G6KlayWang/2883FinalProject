@@ -100,13 +100,6 @@ def main() -> None:
             raise ValueError(
                 "C-transform was fitted on a different source/training population"
             )
-        if (
-            expected["checkpoint_sha256"] != checkpoint_sha
-            or expected["source"] != frames.identity["source"]
-        ):
-            raise ValueError("C-transform checkpoint/source mismatch")
-        if expected["frame_policy"] != config.frame_policy:
-            raise ValueError("C-transform frame-policy mismatch")
         model = EffectiveEncoder(model, ZcaTransform.load(args.transform, expected))
         identity["effective_transform_sha256"] = sha256_file(
             args.transform / "manifest.json"
@@ -146,6 +139,7 @@ def main() -> None:
                     frames,
                     batch_size=config.optimizer.batch_size,
                     device="cuda:0",
+                    seed=config.probe["seed"],
                 )
         finally:
             if args.diagnostic:

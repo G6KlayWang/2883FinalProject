@@ -37,7 +37,7 @@ class ExtractionGateTests(unittest.TestCase):
             self.assertFalse(model.training)
             self.assertTrue(all(not p.requires_grad for p in model.parameters()))
             diagnostic = extraction.train_mode_comparison(
-                model, SyntheticImages(), batch_size=16, device="cpu"
+                model, SyntheticImages(), batch_size=16, device="cpu", seed=1729
             )
             self.assertEqual(diagnostic["scope"], "sampled-disposable-model-copy")
             for key, value in before.items():
@@ -54,7 +54,12 @@ class ExtractionGateTests(unittest.TestCase):
         ]
         policy = run_config_dict()["gate"]
         report, transform = gate.assess_training_features(
-            features, "C", policy, split="train", checkpoint_role="final"
+            features,
+            "C",
+            policy,
+            c_policy=run_config_dict()["c_transform"],
+            split="train",
+            checkpoint_role="final",
         )
         self.assertTrue(report["eligible"])
         self.assertIsNotNone(transform)
@@ -72,7 +77,12 @@ class ExtractionGateTests(unittest.TestCase):
             transforms.fit_zca(features, split="validation", eigenvalue_floor=0.05)
         for arm in ("A", "B", "Aprime"):
             report, repair = gate.assess_training_features(
-                features, arm, policy, split="train", checkpoint_role="final"
+                features,
+                arm,
+                policy,
+                c_policy=run_config_dict()["c_transform"],
+                split="train",
+                checkpoint_role="final",
             )
             self.assertFalse(report["eligible"])
             self.assertIsNone(repair)
@@ -82,17 +92,32 @@ class ExtractionGateTests(unittest.TestCase):
         policy = run_config_dict()["gate"]
         collapsed = np.ones((32, 3))
         report, transform = gate.assess_training_features(
-            collapsed, "C", policy, split="train", checkpoint_role="final"
+            collapsed,
+            "C",
+            policy,
+            c_policy=run_config_dict()["c_transform"],
+            split="train",
+            checkpoint_role="final",
         )
         self.assertFalse(report["eligible"])
         self.assertIsNone(transform)
         with self.assertRaisesRegex(ValueError, "diagnostic"):
             gate.assess_training_features(
-                collapsed, "A", policy, split="train", checkpoint_role="diagnostic"
+                collapsed,
+                "A",
+                policy,
+                c_policy=run_config_dict()["c_transform"],
+                split="train",
+                checkpoint_role="diagnostic",
             )
         with self.assertRaisesRegex(ValueError, "train"):
             gate.assess_training_features(
-                collapsed, "A", policy, split="test", checkpoint_role="final"
+                collapsed,
+                "A",
+                policy,
+                c_policy=run_config_dict()["c_transform"],
+                split="test",
+                checkpoint_role="final",
             )
 
     def test_statistics_report_coordinate_and_projection_kurtosis(self):
@@ -105,3 +130,89 @@ class ExtractionGateTests(unittest.TestCase):
         self.assertEqual(len(report["projection_excess_kurtosis"]), 3)
         self.assertEqual(report["moment_scope"], "exhaustive")
         self.assertEqual(report["epps_pulley_rows"], 4)
+
+    def test_c_transform_policy_applies_with_gate_disabled_and_is_independent(self):
+        gate = implementation("gate")
+        policy = dict(
+            run_config_dict()["gate"],
+            enabled=False,
+            mean_limit=100.0,
+            eigenvalue_min=0.001,
+            eigenvalue_max=100.0,
+        )
+        c_policy = run_config_dict()["c_transform"]
+        values = np.random.default_rng(19).normal(size=(512, 3)) * [2, 3, 0.5] + 3
+        report, transform = gate.assess_training_features(
+            values,
+            "C",
+            policy,
+            c_policy=c_policy,
+            split="train",
+            checkpoint_role="final",
+        )
+        self.assertTrue(report["eligible"])
+        self.assertTrue(report["c_transform_policy_pass"])
+        self.assertEqual(report["c_transform_policy"], c_policy)
+        self.assertIsNotNone(transform)
+        np.testing.assert_allclose(
+            np.cov(transform.apply(values).T), np.eye(3), atol=1e-5
+        )
+        collapsed = np.ones((32, 3))
+        report, transform = gate.assess_training_features(
+            collapsed,
+            "C",
+            policy,
+            c_policy=c_policy,
+            split="train",
+            checkpoint_role="final",
+        )
+        self.assertFalse(report["eligible"])
+        self.assertFalse(report["c_transform_policy_pass"])
+        self.assertIsNone(transform)
+
+    def test_bn_diagnostic_is_seeded_population_sample_with_row_provenance(self):
+        import hashlib
+
+        extraction = implementation("extract")
+
+        class Population:
+            ids = np.column_stack((np.arange(256), np.arange(256) * 5))
+
+            def __init__(self):
+                self.reads = []
+
+            def __len__(self):
+                return len(self.ids)
+
+            def __getitem__(self, index):
+                self.reads.append(index)
+                return np.full((3, 96, 96), index / 256, dtype=np.float32)
+
+        frames = Population()
+        model = tiny_model().eval()
+        before = {k: v.clone() for k, v in model.state_dict().items()}
+        first = extraction.train_mode_comparison(
+            model, frames, batch_size=16, device="cpu", seed=23
+        )
+        selected = frames.reads[:32]
+        self.assertEqual(len(set(selected)), 32)
+        self.assertTrue(any(i >= 128 for i in selected))
+        self.assertEqual(frames.reads[32:], selected)
+        self.assertEqual(first["selection_seed"], 23)
+        self.assertEqual(
+            first["row_digest"],
+            hashlib.sha256(frames.ids[selected].astype("<i8").tobytes()).hexdigest(),
+        )
+        frames.reads.clear()
+        self.assertEqual(
+            first,
+            extraction.train_mode_comparison(
+                model, frames, batch_size=16, device="cpu", seed=23
+            ),
+        )
+        other = extraction.train_mode_comparison(
+            model, frames, batch_size=16, device="cpu", seed=24
+        )
+        self.assertNotEqual(first["row_digest"], other["row_digest"])
+        for name, value in before.items():
+            torch.testing.assert_close(value, model.state_dict()[name], rtol=0, atol=0)

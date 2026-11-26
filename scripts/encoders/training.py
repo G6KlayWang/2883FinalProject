@@ -27,6 +27,7 @@ from scripts.encoders.runtime import (
     configure_precision,
     model_time_limit,
     worker_init,
+    runtime_record,
 )
 
 
@@ -119,6 +120,7 @@ class Trainer:
                     "checkpoint_profile": config.profile,
                     "torch": torch.__version__,
                     "device": device,
+                    "runtime_controls": runtime_record(),
                 },
             )
             self._write_ledger()
@@ -250,7 +252,8 @@ class Trainer:
                 gradients = torch.autograd.grad(
                     terms[name], parameters, retain_graph=True, allow_unused=True
                 )
-                metrics[name + "_gradient_norm"] = _gradient_norm(gradients)
+                label = "regularizer_unweighted" if name == "regularizer" else name
+                metrics[label + "_gradient_norm"] = _gradient_norm(gradients)
         terms["total"].backward()
         metrics["gradient_norm"] = _gradient_norm(p.grad for p in parameters)
         self.optimizer.step()

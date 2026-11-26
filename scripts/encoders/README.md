@@ -3,7 +3,9 @@
 Four image-only, randomly initialized encoder arms share the reviewed PushT data
 interfaces. `configs/production-proposed.json` and the 10+3 queue in
 `configs/run-sheet.json` are explicit proposals, not permission to train.
-Production entrypoints reject unapproved recipe, grid, gate and probe policies.
+Production entrypoints reject unapproved recipe, grid, gate, C-transform and probe
+policies. The C moment-matching policy is independent of the optional eligibility
+gate: disabling that gate does not disable C whitening or permit an unrepairable C.
 Changing an approval label requires the corresponding recorded team/user decision.
 No entrypoint launches another job or implements Diffusion Forcing/planning.
 
@@ -91,6 +93,9 @@ peak GPU memory. Extraction must report finite `(N,128)` features. Diagnostic
 artifacts cannot become scientific candidates, fit candidate probes or enter
 selection. A tiny-batch distribution gate is not a smoke success criterion.
 
+The coordinator also keeps one attempts ledger across output directories; a new
+directory does not authorize a fresh smoke budget. It must report every attempt.
+
 Checkpoints include parameters/BatchNorm buffers, optimizer, scheduler count/LR,
 logical sampler cursor, named and global RNG states, immutable identities and
 runtime ledger. Resume requires the latest recorded checkpoint file hash and
@@ -161,13 +166,30 @@ CUDA_VISIBLE_DEVICES="$GPU_UUID" "$PY" -m scripts.encoders.evaluate \
 
 Extraction requires a completed final checkpoint and clean frozen `eval()`
 forwards; it verifies unchanged parameters/buffers and reports a disposable-copy
-train/eval comparison. Evaluation verifies complete source/split/row identity,
+train/eval comparison on at most two full batches sampled without replacement
+from the complete population. Its seed is the configured probe seed (shared
+across arms), and the report records that seed and the sampled episode/frame-row
+digest. Evaluation verifies complete source/split/row identity,
 fits train-only transformations/probes, and publishes a self-contained report,
 linear/MLP probes, and optional C transform. Subsequent effective C extraction
 must add `--transform "$EVALUATION/C-transform"` to both train/validation commands.
-Its fit source/checkpoint/policy/training-row identity is checked. Selection
+Its fit source/checkpoint/policy/training-row identity is checked. C uses an
+explicit proposed `c_transform` policy: `if_moments_fail`, mean limit.1, covariance
+interval[.5,2], raw eigenvalue floor.05. These are configurable proposals with
+their own approval status, not acceptance of the gate amendment. Selection
 requires all ten first-seed reports with one consistent protocol. It writes
-three seed1 configurations only for approved policies, without launching them.
+three seed1 configurations only for approved policies and binds their config
+hashes in the selection receipt, without launching them. A/B grids must match.
+Seed0 production requires `--candidate`; arbitrary direct/off-grid weights and
+extra seeds are refused. Run each selected repeat using its exact emitted config
+and receipt, with no `--candidate`:
+
+```sh
+CUDA_VISIBLE_DEVICES="$GPU_UUID" "$PY" -m scripts.encoders.train \
+  --config "$REPEAT_CONFIGS/A-selected-seed1.json" --selection-report "$SELECTION" \
+  --hdf5 "$H5" --manifest "$MAN" --cache "$CACHE_ROOT/train-phase0" \
+  --output "$REPEAT_RUN" --code-revision "$SHA"
+```
 Test rows and planning results cannot affect this path.
 
 ## Explicit mathematical and proposed recipe settings
@@ -197,13 +219,17 @@ Test rows and planning results cannot affect this path.
 - Proposed AdamW batch512,30000 updates,1000 linear-warmup updates from1% peak,
   cosine decay5e-4→5e-7, decay5e-4 on weights only. Biases/norm parameters have
   no decay. Separate term gradient norms use `autograd.grad` without touching
-  optimizer `.grad`. TF32 choices are explicit; smoke always disables both.
+  optimizer `.grad`; `regularizer_unweighted_gradient_norm` explicitly measures
+  the unweighted regularizer. Actual deterministic-algorithm/warn-only/cuDNN flags
+  and matmul precision are persisted in the run record. TF32 choices are explicit; smoke always disables both.
 - Measurements report exhaustive float64 train moments/eigenspectrum and both
   coordinate/fixed-projection excess kurtosis. EP uses at most4096 fixed sampled
   rows and128 directions; report distinguishes scope. Constant directions have
   null kurtosis. The proposed gate requires means±.1/eigenvalues[.5,2], Gaussian
   median coordinate kurtosis±.5 or B median≥1.5. C may use a symmetric train-only
-  ZCA only when moments fail and min raw eigenvalue≥.05; no repair for other arms.
+  ZCA only when its independent C-policy moments fail and min raw eigenvalue≥.05;
+  an unrepairable C fails that policy even with the eligibility gate disabled.
+  No repair is implemented for other arms.
 - Proposed probes share train feature standardization and train target variances:
   closed-form OLS; two-layer hidden256 MLP,50 fixed epochs, final epoch, AdamW
   lr.001/wd0, seed1729. No validation early stopping. Targets are Txy, sin/cosθ,
@@ -214,6 +240,16 @@ Test rows and planning results cannot affect this path.
   diagnostics. Scores within2% of best tie; prefer nearest log2-distance to
   rho10(A/B) or1(C), then smaller rho and run ID. No eligible candidate stops.
 - Runtime defaults: one job/GPU,4 workers/job,prefetch2, trainer2 intra-op/1
-  inter-op threads, worker math1; cgroup memory guard200GiB and disk reserve40GiB.
+  inter-op threads, worker math1; cgroup working-set memory guard200GiB and disk reserve40GiB.
+  Working set is max(0,memory.current-inactive_file), falling back conservatively
+  to memory.current when memory.stat/inactive_file is unavailable. Separately,
+  raw memory.current at95% of a finite memory.max stops execution. Errors record
+  the accounting values; this protects the actual limit without counting the
+  whole inactive file cache against the200GiB working-set budget.
   Production max86400 seconds is an engineering stop, not a runtime prediction.
   Full-cache and batch512 memory/throughput checks remain future execution work.
+
+Remaining operational work: the coordinator owns cross-directory smoke attempt
+accounting (M5); augmentation/label/cache throughput needs separately authorized
+profiling (M6); final test-set reporting needs new reviewed tooling after choices
+are locked (M7). Development entrypoints continue to refuse test rows.

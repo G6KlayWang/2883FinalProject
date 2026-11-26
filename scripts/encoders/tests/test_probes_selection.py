@@ -157,6 +157,7 @@ class ProbeSelectionTests(unittest.TestCase):
         protocol = {
             "probe_policy": config.probe,
             "gate_policy": config.gate,
+            "c_transform_policy": config.c_transform,
             "frame_policy": config.frame_policy,
             "shared_training_controls": shared_training_controls(config),
         }

@@ -16,7 +16,6 @@ class GatePolicy:
     eigenvalue_max: float
     gaussian_kurtosis_limit: float
     laplace_kurtosis_min: float
-    zca_eigenvalue_floor: float
 
     @classmethod
     def from_dict(cls, value: dict) -> "GatePolicy":
@@ -33,7 +32,6 @@ class GatePolicy:
             result.eigenvalue_max,
             result.gaussian_kurtosis_limit,
             result.laplace_kurtosis_min,
-            result.zca_eigenvalue_floor,
         ]
         if not all(np.isfinite(v) and v > 0 for v in thresholds):
             raise ValueError("Gate thresholds must be finite and positive")
@@ -42,7 +40,39 @@ class GatePolicy:
         return result
 
 
-def _moments_pass(statistics: dict, policy: GatePolicy) -> bool:
+@dataclass(frozen=True)
+class CTransformPolicy:
+    """Standing C moment matching, independent of the optional eligibility gate."""
+
+    status: str
+    mode: str
+    mean_limit: float
+    eigenvalue_min: float
+    eigenvalue_max: float
+    eigenvalue_floor: float
+
+    @classmethod
+    def from_dict(cls, value: dict) -> "CTransformPolicy":
+        validate_fields(value, {f.name for f in fields(cls)}, "C transform policy")
+        result = cls(**value)
+        if result.status not in ("proposed", "approved"):
+            raise ValueError("C transform status must be explicit proposed/approved")
+        if result.mode != "if_moments_fail":
+            raise ValueError("C transform mode must preserve if_moments_fail matching")
+        thresholds = (
+            result.mean_limit,
+            result.eigenvalue_min,
+            result.eigenvalue_max,
+            result.eigenvalue_floor,
+        )
+        if not all(np.isfinite(v) and v > 0 for v in thresholds):
+            raise ValueError("C transform thresholds must be finite and positive")
+        if result.eigenvalue_min > result.eigenvalue_max:
+            raise ValueError("C transform covariance interval is reversed")
+        return result
+
+
+def _moments_pass(statistics: dict, policy: GatePolicy | CTransformPolicy) -> bool:
     return (
         max(abs(v) for v in statistics["mean"]) <= policy.mean_limit
         and min(statistics["covariance_eigenvalues"]) >= policy.eigenvalue_min
@@ -51,7 +81,13 @@ def _moments_pass(statistics: dict, policy: GatePolicy) -> bool:
 
 
 def assess_training_features(
-    features: np.ndarray, arm: str, policy: dict, *, split: str, checkpoint_role: str
+    features: np.ndarray,
+    arm: str,
+    policy: dict,
+    *,
+    c_policy: dict,
+    split: str,
+    checkpoint_role: str
 ) -> tuple[dict, ZcaTransform | None]:
     if split != "train":
         raise ValueError("Eligibility gate uses training features only")
@@ -62,12 +98,13 @@ def assess_training_features(
     if arm not in ("A", "B", "C", "Aprime"):
         raise ValueError("Unknown gate arm")
     settings = GatePolicy.from_dict(policy)
+    c_settings = CTransformPolicy.from_dict(c_policy)
     raw = feature_statistics(features)
     effective, transform = raw, None
-    if settings.enabled and arm == "C" and not _moments_pass(raw, settings):
-        if min(raw["covariance_eigenvalues"]) >= settings.zca_eigenvalue_floor:
+    if arm == "C" and not _moments_pass(raw, c_settings):
+        if min(raw["covariance_eigenvalues"]) >= c_settings.eigenvalue_floor:
             transform = fit_zca(
-                features, split="train", eigenvalue_floor=settings.zca_eigenvalue_floor
+                features, split="train", eigenvalue_floor=c_settings.eigenvalue_floor
             )
             effective = feature_statistics(transform.apply(features))
     coordinate_kurtosis = [
@@ -81,13 +118,16 @@ def assess_training_features(
         )
     elif arm == "B":
         shape_pass = median is not None and median >= settings.laplace_kurtosis_min
-    eligible = not settings.enabled or (
-        _moments_pass(effective, settings) and shape_pass
+    c_policy_pass = arm != "C" or _moments_pass(effective, c_settings)
+    eligible = c_policy_pass and (
+        not settings.enabled or (_moments_pass(effective, settings) and shape_pass)
     )
     return {
         "eligible": bool(eligible),
         "policy": policy,
         "arm": arm,
+        "c_transform_policy": c_policy,
+        "c_transform_policy_pass": bool(c_policy_pass),
         "raw_statistics": raw,
         "effective_statistics": effective,
         "coordinate_shape_pass": shape_pass,

@@ -51,7 +51,7 @@ class EvaluationPipelineTests(unittest.TestCase):
             prepared = PreparedData(path, manifest)
             value = run_config_dict()
             value.update(profile="production", recipe_status="approved")
-            for key in ("grids", "gate", "probe"):
+            for key in ("grids", "gate", "c_transform", "probe"):
                 value[key]["status"] = "approved"
             value["gate"]["enabled"] = False
             value["probe"].update(epochs=1, hidden=16, batch_size=16)
