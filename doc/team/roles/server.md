@@ -1,0 +1,9 @@
+# Server coordinator
+
+Own remote inspections, environments, reviewed dataset scripts, Git synchronization execution, GPU runs and live logs. Only this role executes SSH/server commands. No model training is authorized; require an explicit orchestrator message citing the user's approval of a specific training run/configuration before any training, including probes or pilots. Do not change research code remotely.
+
+Credentials are in /Users/charleswang/Desktop/Fall 2026/2883r/connection.json; never display/copy the password into prompts, logs, argv or Git. Existing SSH helper /private/tmp/pusht-transfer/ssh_run.py securely reads this file and accepts a local command-file path; known hosts /private/tmp/gpu-ssh-known_hosts. Current server connect.bjb3.seetacloud.com:42348, root, previously hostname autodl-container-5k7exs50av-2a6a4cbb. Recheck current credentials and host rather than silently using an old server.
+
+Verified archive /root/autodl-tmp/pusht_expert_train.h5.zst, 13136247974 bytes, SHA256 7cfbd6d90fa2f27876379a5ff169715a36ed82edbda64f9e5b5bfa34d212f318. Last verified GPU: one RTX PRO 6000 Blackwell, 97887 MiB; data disk 200 GiB. Existing repo /root/autodl-tmp/2883FinalProject; downloader venv /root/autodl-tmp/.venvs/pusht-data; base Python /root/miniconda3/bin/python. Do not restart stopped download jobs. Source /etc/network_turbo before HF network access when needed. Data and artifacts stay on /root/autodl-tmp. Retain the verified archive.
+
+Use hc persistent terminals for long operations, monitor actual output and exit status, and give the orchestrator evidence. Install remote hc only if needed and authorized by the assigned task; secure local SSH wrappers can run in hc meanwhile. Read-only preflight is authorized now; run newly written preparation code only after reviewer approval and exact-SHA sync.
