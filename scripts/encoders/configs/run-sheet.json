@@ -1,0 +1,135 @@
+{
+  "status": "proposed-not-authorized",
+  "base_config": "production-proposed.json",
+  "open_choices": [
+    "frame/window policy",
+    "grids/optimizer recipe",
+    "Aprime convention",
+    "eligibility/C whitening",
+    "probe/score/mask/ties",
+    "TF32",
+    "shared augmentation/view forwarding"
+  ],
+  "slots": 4,
+  "workers_per_job": 4,
+  "intraop_threads_per_job": 2,
+  "interop_threads_per_job": 1,
+  "aggregate_memory_guard_gib": 200,
+  "disk_reserve_gib": 40,
+  "runs": [
+    {
+      "run_id": "A-rho2.5-seed0",
+      "arm": "A",
+      "rho": 2.5,
+      "seed": 0,
+      "stage": "candidate",
+      "status": "proposed",
+      "queue_position": 0
+    },
+    {
+      "run_id": "B-rho2.5-seed0",
+      "arm": "B",
+      "rho": 2.5,
+      "seed": 0,
+      "stage": "candidate",
+      "status": "proposed",
+      "queue_position": 1
+    },
+    {
+      "run_id": "C-rho0.25-seed0",
+      "arm": "C",
+      "rho": 0.25,
+      "seed": 0,
+      "stage": "candidate",
+      "status": "proposed",
+      "queue_position": 2
+    },
+    {
+      "run_id": "Aprime-rho0.210526-seed0",
+      "arm": "Aprime",
+      "rho": 0.2105263157894737,
+      "seed": 0,
+      "stage": "candidate",
+      "status": "proposed",
+      "queue_position": 3
+    },
+    {
+      "run_id": "B-rho10-seed0",
+      "arm": "B",
+      "rho": 10.0,
+      "seed": 0,
+      "stage": "candidate",
+      "status": "proposed",
+      "queue_position": 4
+    },
+    {
+      "run_id": "C-rho1-seed0",
+      "arm": "C",
+      "rho": 1.0,
+      "seed": 0,
+      "stage": "candidate",
+      "status": "proposed",
+      "queue_position": 5
+    },
+    {
+      "run_id": "A-rho10-seed0",
+      "arm": "A",
+      "rho": 10.0,
+      "seed": 0,
+      "stage": "candidate",
+      "status": "proposed",
+      "queue_position": 6
+    },
+    {
+      "run_id": "B-rho40-seed0",
+      "arm": "B",
+      "rho": 40.0,
+      "seed": 0,
+      "stage": "candidate",
+      "status": "proposed",
+      "queue_position": 7
+    },
+    {
+      "run_id": "C-rho4-seed0",
+      "arm": "C",
+      "rho": 4.0,
+      "seed": 0,
+      "stage": "candidate",
+      "status": "proposed",
+      "queue_position": 8
+    },
+    {
+      "run_id": "A-rho40-seed0",
+      "arm": "A",
+      "rho": 40.0,
+      "seed": 0,
+      "stage": "candidate",
+      "status": "proposed",
+      "queue_position": 9
+    },
+    {
+      "run_id": "A-selected-seed1",
+      "arm": "A",
+      "rho": null,
+      "seed": 1,
+      "stage": "repeat",
+      "status": "awaits-validation-selection"
+    },
+    {
+      "run_id": "B-selected-seed1",
+      "arm": "B",
+      "rho": null,
+      "seed": 1,
+      "stage": "repeat",
+      "status": "awaits-validation-selection"
+    },
+    {
+      "run_id": "C-selected-seed1",
+      "arm": "C",
+      "rho": null,
+      "seed": 1,
+      "stage": "repeat",
+      "status": "awaits-validation-selection"
+    }
+  ]
+}
