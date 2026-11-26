@@ -1,1 +1,6 @@
 huggingface_hub==0.36.0
+h5py==3.16.0
+hdf5plugin==7.1.0
+numpy==2.5.5
+pillow==13.0.0
+zstandard==0.25.0
