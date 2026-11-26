@@ -33,5 +33,15 @@ class VerificationTests(unittest.TestCase):
             self.module.verify_file(self.path, 16, self.digest)
 
 
+class ScriptCompatibilityTests(unittest.TestCase):
+    def test_direct_script_help_works_outside_repository(self):
+        import subprocess
+        import sys
+        with tempfile.TemporaryDirectory() as folder:
+            result = subprocess.run([sys.executable, str(SCRIPT), '--help'], cwd=folder, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('--destination', result.stdout)
+
+
 if __name__ == '__main__':
     unittest.main()

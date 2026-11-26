@@ -10,7 +10,7 @@ If there is a gain, the plan also asks where it shows up: in prediction accuracy
 
 ## Data
 
-PushT noisy expert replay, originally released with DINO-WM: about 18,500 to 20,000 episodes (sources differ) of 100 to 300 steps each, with images, 2-D pusher actions, and simulator states.
+PushT noisy expert replay, distributed as the LeWorldModel HDF5 archive: local inspection verified 18,685 episodes, 2,336,736 frames at 224 x 224 RGB, 2-D relative pusher actions, and seven simulator-state fields. Episode lengths are 49 to 246. Exact historical converter provenance remains unverified.
 
 | Item | Source | Notes |
 | --- | --- | --- |
@@ -27,10 +27,10 @@ zstd -d data/pusht_expert_train.h5.zst   # needs the zstd command-line tool
 Preparation:
 
 1. Open the file and confirm the image resolution, the action shape, and that the state holds the T's position and angle and the pusher's position.
-2. Split by episode into 90% train, 5% validation, 5% test with a fixed seed, before fitting anything.
+2. User-approved amendment (2026-11-26): split whole trajectory families into 90% train, 5% validation, 5% test with seed 42 before filtering or fitting anything. The archive contains 185 exact-initial-state families of 101 noisy replays each. Infer and validate these families from the file; do not split siblings across sets. Assign 167/9/9 families, yielding 16,867/909/909 episodes. Validation and test each contain only nine distinct starting configurations. This supersedes random episode assignment to prevent near-duplicate demonstration leakage; the research hypotheses are unchanged.
 3. Use a frameskip of 5: each step stacks 5 consecutive actions into one 10-d action and keeps the frame that follows them.
 4. Resize frames to 96 x 96 for the encoders.
-5. Use simulator states only for pose probes and evaluation, never for training.
+5. Use simulator states for family membership solely to prevent split leakage, and separately for pose probes and evaluation. Never expose simulator state or proprioception as model inputs or targets. See `scripts/data/README.md` for observed schema, alignment evidence, preparation commands, and remaining simulator-replay limitations.
 
 ## Arms
 

@@ -2,7 +2,6 @@
 """Download the PushT archive, report progress, and verify its published hash."""
 
 import argparse
-import hashlib
 import json
 import logging
 import os
@@ -13,23 +12,16 @@ import threading
 import time
 
 
+# Preserve both the wrapper's direct-script entrypoint and package imports.
+if __name__ == '__main__' and not __package__:
+    from file_io import verify_file
+else:
+    from scripts.data.file_io import verify_file
+
+
 REPO_ID = "quentinll/lewm-pusht"
 FILENAME = "pusht_expert_train.h5.zst"
 LOG = logging.getLogger("pusht")
-
-
-def verify_file(path, expected_size, expected_sha256):
-    """Reject incomplete or corrupt files, including same-size corruption."""
-    if path.stat().st_size != expected_size:
-        raise ValueError(f"Unexpected file size for {path}")
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(8 * 1024 * 1024), b""):
-            digest.update(chunk)
-    actual = digest.hexdigest()
-    if actual != expected_sha256:
-        raise ValueError(f"SHA-256 mismatch for {path}: {actual}")
-    return actual
 
 
 def progress(destination, total, stop):

@@ -98,7 +98,7 @@ These are the conditions that make the comparison valid. Breaking one silently i
 2. **Shared loss for A and B.** One function, with the target sampler as the only switch.
 3. **Identical Diffusion Forcing.** Same architecture, horizon, noise schedule, step count, learning rate, and sampling budget for every arm.
 4. **Frozen encoders.** Diffusion Forcing trains on cached features and never updates an encoder.
-5. **No leakage.** Split by episode with a fixed seed before fitting anything. Normalizers, whitening transforms, and probes are fitted on training data only.
+5. **No leakage.** Keep whole trajectory families together with seed 42 before fitting anything, following the user-approved family-split amendment in [implementation_plan.md](implementation_plan.md#data). This refines the original episode split to prevent noisy replay siblings crossing sets; the research hypotheses are unchanged. Normalizers, whitening transforms, and probes are fitted on training data only.
 6. **Simulator state is for measurement only.** It is used for pose probes and evaluation, never as a training input or target for encoders or Diffusion Forcing.
 7. **Pose-preserving augmentations.** Appearance changes only (colour jitter, blur, noise). No crops, flips, or rotations.
 8. **Same evaluation.** One fixed set of episodes, goals, and planner seeds shared by all arms.
