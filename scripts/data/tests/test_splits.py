@@ -2,6 +2,7 @@ import copy
 import importlib
 from pathlib import Path
 import unittest
+from fixtures import DOWNLOAD
 
 
 def schema_fixture(count=41):
@@ -12,8 +13,6 @@ def schema_fixture(count=41):
         'duplicate_episode_groups': [],
     }
 
-
-DOWNLOAD = {'sha256': 'b' * 64, 'size_bytes': 70, 'dataset_revision': 'source-revision'}
 
 
 class SplitTests(unittest.TestCase):
@@ -96,3 +95,17 @@ class SplitTests(unittest.TestCase):
         schema['duplicate_episode_groups'] = [list(range(41))]
         with self.assertRaisesRegex(ValueError, 'duplicate'):
             self.build(schema)
+
+    def test_missing_manifest_fields_have_actionable_value_errors(self):
+        for field in ('source', 'episodes', 'duplicate_episode_groups', 'splits', 'code_revision'):
+            with self.subTest(field=field):
+                manifest = self.build()
+                del manifest[field]
+                with self.assertRaisesRegex(ValueError, field):
+                    self.splits.validate_manifest(manifest)
+
+    def test_build_missing_source_fields_are_value_errors(self):
+        download = copy.deepcopy(DOWNLOAD)
+        del download['sha256']
+        with self.assertRaisesRegex(ValueError, 'sha256'):
+            self.splits.build_manifest(schema_fixture(), download, 'candidate', split_unit='episode')

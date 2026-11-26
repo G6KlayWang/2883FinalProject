@@ -11,10 +11,12 @@ import tempfile
 import h5py
 import zstandard
 
-from scripts.data.download_pusht import verify_file
+from scripts.data.file_io import verify_file
 
 LOG = logging.getLogger(__name__)
 RESERVE_BYTES = 1024**3
+MAX_WINDOW_BYTES = 128 * 1024**2
+COMPRESSED_CHUNK_BYTES = 64 * 1024
 
 
 def validate_hdf5(path: Path) -> None:
@@ -43,7 +45,7 @@ def extract_archive(archive: Path, output: Path, expected_size: int,
         size = params.content_size
         if size in (zstandard.CONTENTSIZE_UNKNOWN, zstandard.CONTENTSIZE_ERROR):
             raise ValueError('Archive must declare its decompressed size')
-        if params.window_size > 128 * 1024**2:
+        if params.window_size > MAX_WINDOW_BYTES:
             raise ValueError('Zstandard window exceeds 128 MiB safety limit')
         free = shutil.disk_usage(output.parent).free
         if free < size + RESERVE_BYTES:
@@ -55,10 +57,10 @@ def extract_archive(archive: Path, output: Path, expected_size: int,
         try:
             digest, source_digest = hashlib.sha256(), hashlib.sha256()
             count = 0
-            decoder = zstandard.ZstdDecompressor(max_window_size=128 * 1024).decompressobj()
+            decoder = zstandard.ZstdDecompressor(max_window_size=MAX_WINDOW_BYTES).decompressobj()
             with os.fdopen(descriptor, 'wb') as target:
-                # Small compressed reads bound expansion memory, even for high ratios.
-                for chunk in iter(lambda: source.read(1024), b''):
+                # Bounded compressed chunks; the decoder window is limited separately.
+                for chunk in iter(lambda: source.read(COMPRESSED_CHUNK_BYTES), b''):
                     source_digest.update(chunk)
                     data = decoder.decompress(chunk)
                     count += len(data)

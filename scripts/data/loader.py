@@ -8,12 +8,13 @@ from pathlib import Path
 from collections.abc import Iterator, Sequence
 
 import h5py
+import hdf5plugin  # noqa: F401 -- explicitly registers the archive codec.
 import numpy as np
 from PIL import Image
 
-from scripts.data.download_pusht import verify_file
+from scripts.data.file_io import verify_file
 from scripts.data.families import inspect_families
-from scripts.data.schema import read_layout  # Also registers the Blosc codec.
+from scripts.data.schema import read_layout
 from scripts.data.splits import validate_manifest
 
 LOG = logging.getLogger(__name__)
@@ -55,10 +56,16 @@ class PreparedData:
     once per worker or sample. Subsequent reads reject changed file stat identity;
     the prepared HDF5 must remain immutable during use.
     """
-    def __init__(self, path: Path, manifest: dict):
+    def __init__(self, path: Path, manifest: dict, *, allow_diagnostic_episode_split: bool = False):
         validate_manifest(manifest)
+        self.diagnostic_episode_split = manifest['split_unit'] == 'episode'
+        if self.diagnostic_episode_split and allow_diagnostic_episode_split is not True:
+            raise ValueError('Episode splits are diagnostic only; require allow_diagnostic_episode_split=True')
+        if self.diagnostic_episode_split:
+            LOG.warning('Using diagnostic episode split; shared-start families may cross splits')
         self.path = Path(path).resolve()
         self.manifest = copy.deepcopy(manifest)
+        self.episode_splits = {i: split for split, ids in manifest['splits'].items() for i in ids}
         source = manifest['source']
         verify_file(self.path, source['hdf5_size_bytes'], source['hdf5_sha256'])
         with h5py.File(self.path, 'r') as handle:
@@ -89,7 +96,7 @@ class PreparedData:
         return [self.manifest['episodes'][i] for i in self.manifest['splits'][split]]
 
     def _metadata(self, episode_id: int, split: str) -> dict:
-        return {'episode_id': episode_id, 'split': split,
+        return {'episode_id': episode_id, 'split': split, 'split_unit': self.manifest['split_unit'],
                 'hdf5_sha256': self.manifest['source']['hdf5_sha256']}
 
 
@@ -115,7 +122,8 @@ class TrajectoryDataset:
             'dropped_tail_transitions': sum((ep['length'] - 1) % FRAMESKIP for ep in self.episodes),
             'terminal_action_rows_ignored': len(self.episodes),
         }
-        LOG.info('Trajectory split=%s horizon=%d stride=%d phase=0 frameskip=5 %s', split, horizon, stride, self.statistics)
+        LOG.info('Trajectory split=%s horizon=%d stride=%d phase=0 frameskip=5 %s',
+                 split, horizon, stride, self.statistics)
 
     def __len__(self) -> int:
         return self.cumulative[-1]
@@ -175,5 +183,7 @@ class MeasurementReader:
             raise IndexError('Measurement frame indices outside episode')
         with self.prepared._open() as handle:
             # Separate row reads also preserve caller order/repeated indices.
-            return {key: np.stack([handle[key][episode['offset'] + i] for i in indices])
-                    for key in ('state', 'proprio')}
+            measurements = {key: np.stack([handle[key][episode['offset'] + i] for i in indices])
+                            for key in ('state', 'proprio')}
+        measurements['metadata'] = self.prepared._metadata(episode_id, self.prepared.episode_splits[episode_id])
+        return measurements

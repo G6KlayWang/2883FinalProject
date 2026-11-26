@@ -19,3 +19,6 @@ def make_dataset(path: Path, lengths=(12, 6)) -> Path:
         for row in range(total):
             pixels[row] = np.full((224, 224, 3), row % 256, dtype=np.uint8)
     return path
+
+
+DOWNLOAD = {'sha256': 'b' * 64, 'size_bytes': 70, 'dataset_revision': 'source-revision'}

@@ -87,3 +87,15 @@ class ExtractionTests(unittest.TestCase):
         self.extract()
         self.assertEqual(self.target.read_bytes(), self.payload)
         self.assertEqual(stale.read_bytes(), b'partial')
+
+    def test_extracts_hdf5_with_two_megabyte_decoder_window(self):
+        import numpy as np
+        large = self.root / 'large-source.h5'
+        with h5py.File(large, 'w') as f:
+            f['bytes'] = np.arange(3 * 1024**2, dtype=np.uint8)
+        self.payload = large.read_bytes()
+        params = zstandard.ZstdCompressionParameters.from_level(1, window_log=21)
+        self.archive.write_bytes(zstandard.ZstdCompressor(compression_params=params).compress(self.payload))
+        self.assertEqual(zstandard.get_frame_parameters(self.archive.read_bytes()).window_size, 2 * 1024**2)
+        self.extract()
+        self.assertEqual(self.target.read_bytes(), self.payload)

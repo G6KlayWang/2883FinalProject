@@ -66,7 +66,9 @@ remote work. Both checkouts should report the same `git rev-parse HEAD`.
 
 ## Prepare an existing archive (no training)
 
-Run from the repository root with Python 3.12 or later in an isolated environment.
+Run from the repository root in an isolated environment. Local verification used
+Python 3.13.9; server Python 3.12.3 is the deployment target. DATA-001-RUN must
+confirm the pinned dependencies and full test suite on 3.12.3 before extraction.
 The existing downloader and wrapper retain their behavior. If the archive is
 already available, use it directly; preparation makes no dataset network requests.
 The verified server archive is `/root/autodl-tmp/pusht_expert_train.h5.zst`;
@@ -79,6 +81,8 @@ python3 -m venv .venv
 PUSHT_ARCHIVE='/absolute/path/pusht_expert_train.h5.zst'
 PUSHT_DOWNLOAD_MANIFEST='/absolute/path/download_manifest.json'
 PUSHT_PREP_DIR='data/pusht'
+# Set to the exact reviewed commit; do not reuse a prior candidate's revision.
+PUSHT_CODE_REVISION='REPLACE_WITH_REVIEWED_COMMIT'
 mkdir -p "$PUSHT_PREP_DIR"
 .venv/bin/python -m scripts.data.extract_pusht \
   --archive "$PUSHT_ARCHIVE" --download-manifest "$PUSHT_DOWNLOAD_MANIFEST" \
@@ -88,14 +92,17 @@ mkdir -p "$PUSHT_PREP_DIR"
   --output "$PUSHT_PREP_DIR/schema.json"
 .venv/bin/python -m scripts.data.audit_alignment \
   --hdf5 "$PUSHT_PREP_DIR/pusht_expert_train.h5" \
+  --code-revision "$PUSHT_CODE_REVISION" \
   --output "$PUSHT_PREP_DIR/alignment.json"
-# Set to the exact reviewed commit; do not reuse a prior candidate's revision.
-PUSHT_CODE_REVISION='REPLACE_WITH_REVIEWED_COMMIT'
 .venv/bin/python -m scripts.data.splits \
   --schema "$PUSHT_PREP_DIR/schema.json" \
   --download-manifest "$PUSHT_DOWNLOAD_MANIFEST" \
   --code-revision "$PUSHT_CODE_REVISION" \
   --output "$PUSHT_PREP_DIR/split_manifest.json"
+.venv/bin/python -m scripts.data.smoke \
+  --hdf5 "$PUSHT_PREP_DIR/pusht_expert_train.h5" \
+  --manifest "$PUSHT_PREP_DIR/split_manifest.json" \
+  --output "$PUSHT_PREP_DIR/smoke.json"
 ```
 
 On the server, use the data volume for the venv, HDF5 and reports, rather than the
@@ -104,9 +111,10 @@ and exact-commit synchronization. No GPU or PyTorch is required for preparation.
 
 Extraction verifies the full archive size and SHA-256 before decompressing, checks
 free space for the declared output size plus a 1 GiB reserve, bounds the decoder
-window to 128 MiB, and verifies frame completion, output size and HDF5 readability.
+window to 128 MiB using the same byte-limit constant for the header and decoder,
+reads compressed input in 64 KiB chunks, and verifies frame completion, output size and HDF5 readability.
 It hashes the input again while decompressing and prints an extraction receipt
-with both hashes. Publication uses a unique sibling `.incomplete` file and an
+with both hashes; the coordinator captures stdout durably. Publication uses a unique sibling `.incomplete` file and an
 atomic hard link that cannot replace an existing output. Ordinary exceptions and
 interruptions clean up the temporary file; a hard kill can leave a stale partial.
 A partial is never reused. Preserve the archive and investigate existing outputs;
@@ -138,6 +146,8 @@ Pixels use Blosc filter 32001 and chunks of 100 images; `hdf5plugin` registers t
 codec. Numeric columns use 1000-row chunks. Schema inspection verifies axes,
 dtypes, contiguous boundaries, episode/step indices, finite numeric values,
 codec readability, full-file identity, families, and exact duplicate episodes.
+The schema marks `verified_pusht_source`; any other HDF5 hash emits a WARNING
+and explicitly skips the pinned 185x101 structure assertion.
 The duplicate audit hashes complete action sequences and then first images for
 matching candidates. It detects exact duplicates under that definition, not
 near-equivalent trajectories; the family audit handles shared starts separately.
@@ -168,6 +178,10 @@ Each held-out set has only 9 distinct starting configurations: evaluation over 5
 or more episodes reuses starts and reports must state that limit. No statistics
 or normalizers are fitted here. `--split-unit episode` retains the earlier
 explicit option for diagnostics; it is not the approved research split.
+`PreparedData` rejects it by default. Diagnostic use requires
+`allow_diagnostic_episode_split=True`, emits a WARNING, and labels all sample
+provenance with `split_unit`. The smoke CLI requires the separate explicit flag
+`--allow-diagnostic-episode-split` and records that opt-in in its report.
 
 ## Loader interfaces and temporal alignment
 
@@ -182,11 +196,12 @@ windows = TrajectoryDataset(prepared, 'train', horizon=2, stride=1)
 sample = windows[0]
 # sample['frames']: (3,3,96,96), float32 RGB CHW [0,1]
 # sample['actions']: (2,10), raw float32; reshape to (2,5,2) if desired
-# sample['metadata']: episode_id, split, HDF5 hash, local frame_indices
+# sample['metadata']: episode_id, split, split_unit, HDF5 hash, local frame_indices
 print(windows.statistics)
 raw_frames = RawFrameDataset(prepared, 'train')  # every raw frame; no encoder policy selected
 measurements = MeasurementReader(prepared, purpose='evaluation')
 labels = measurements.read(sample['metadata']['episode_id'], sample['metadata']['frame_indices'])
+# labels['metadata'] includes the split, so future probe fitting can require train.
 ```
 
 For K macro transitions starting at local row t, frames are
@@ -197,6 +212,8 @@ Each window is contained in one episode. Incomplete trailing transitions and
 the final action (which has no successor image) are discarded and counted.
 Horizon/stride are positive integer macro steps. Too-short episodes stay in the
 manifest and are counted as having no windows; empty splits have length 0.
+`dropped_tail_transitions` counts only the incomplete frameskip-5 tail. It does
+not count complete blocks left uncovered by a larger horizon or stride.
 
 One shared function performs a full-image Pillow bilinear resize with its downscale
 antialiasing, then converts to contiguous float32 RGB CHW /255. There are no crops,
@@ -214,6 +231,13 @@ exercise two spawned processes without requiring PyTorch. Per-sample open and
 100-image chunk decompression favor correctness over optimized throughput; measure
 and optimize caching in a later training milestone if necessary.
 
+The committed `scripts.data.smoke` command checks first/middle/last K2 windows in
+all three splits, float32 shapes/ranges, episode-local indices, allowed model
+fields and provenance, and separate evaluation measurement shapes/identity. It
+hashes HDF5 once through a shared `PreparedData`, then atomically publishes JSON
+with counts, selected indices, source/manifest/code hashes and diagnostic status.
+Every split must have a K2 window; errors cannot publish a success report.
+
 ## Evidence and remaining limits
 
 Pinned primary source:
@@ -229,7 +253,13 @@ archive; future normalizers must be fitted on the approved training split.
 `audit_alignment` reconstructs every 2,318,051 valid within-episode transition.
 Outgoing action lag 0 gives pusher-position RMSE 1.38326e-5 pixels, max 6.26306e-5;
 lag ±1 comparisons each cover 2,299,366 valid shifted-action pairs with RMSE 4.45696.
-Proprio equals state[:,[0,1,5,6]] exhaustively. Independent reviewer image checks
+Proprio equals state[:,[0,1,5,6]] exhaustively. The audit report binds the full
+HDF5 SHA-256 and size plus the supplied reviewed code revision. Acceptance requires
+all transitions, at least one transition, lag-0 maximum error at most 1e-4 pixels,
+lag-0 RMSE at most 1% of both nonempty shifted-lag RMSEs, exact proprio identity,
+and angles in [0,2π). Failed checks publish `status=failed` and exit nonzero;
+missing/nonfinite measurements also fail. A zero-motion fixture without lag
+separation cannot pass. Independent reviewer image checks
 accepted image/state alignment on 3,000 interior rows across 2,725 episodes, seed
 20261126 (sampled, 0.128% of frames), not an exhaustive image proof.
 
@@ -263,3 +293,6 @@ Local DATA-001 evidence lives in the executor worktree's ignored `data/pusht/`:
 checkpoints. The assigned handoff in the original repository records candidate
 identity and verification results; production manifests should use the final
 reviewed commit instead of this uncommitted candidate revision.
+
+The parameterized smoke CLI supersedes the earlier ignored local `data/pusht/smoke.py`
+harness; it does not depend on local paths.

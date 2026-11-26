@@ -10,7 +10,7 @@ import hdf5plugin  # noqa: F401 -- registers the archive's Blosc filter.
 import numpy as np
 
 from scripts.data.file_io import sha256_file, write_json_new
-from scripts.data.families import inspect_families, validate_families
+from scripts.data.families import PUSHT_HDF5_SHA256, inspect_families, validate_families
 
 LOG = logging.getLogger(__name__)
 EXPECTED = {
@@ -136,6 +136,9 @@ def inspect_file(path: Path) -> dict:
     LOG.info('Hashing complete HDF5 (%d bytes)', before.st_size)
     report['hdf5_sha256'] = sha256_file(path)
     validate_families(episodes, report, report['hdf5_sha256'])
+    report['verified_pusht_source'] = report['hdf5_sha256'] == PUSHT_HDF5_SHA256
+    if not report['verified_pusht_source']:
+        LOG.warning('Unverified HDF5 source %s: pinned PushT 185x101 structure assertion skipped', report['hdf5_sha256'])
     after = path.stat()
     if (before.st_size, before.st_mtime_ns, before.st_ino) != (after.st_size, after.st_mtime_ns, after.st_ino):
         raise ValueError('HDF5 changed during inspection')

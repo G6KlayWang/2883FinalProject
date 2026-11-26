@@ -89,3 +89,9 @@ class SchemaTests(unittest.TestCase):
         ], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(output.read_text())['episodes'][1]['offset'], 12)
+
+    def test_nonpinned_source_is_marked_and_warns_that_pusht_structure_check_was_skipped(self):
+        with self.assertLogs('scripts.data.schema', level='WARNING') as logged:
+            report = self.schema.inspect_file(self.path)
+        self.assertFalse(report['verified_pusht_source'])
+        self.assertIn('185x101', ' '.join(logged.output))

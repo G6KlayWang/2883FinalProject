@@ -16,6 +16,17 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def verify_file(path: Path, expected_size: int, expected_sha256: str) -> str:
+    """Reject truncated or same-size-corrupt input before preparation or loading."""
+    path = Path(path)
+    if path.stat().st_size != expected_size:
+        raise ValueError(f'Unexpected file size for {path}')
+    actual = sha256_file(path)
+    if actual != expected_sha256:
+        raise ValueError(f'SHA-256 mismatch for {path}: {actual}')
+    return actual
+
+
 @contextmanager
 def new_output(path: Path) -> Iterator[Path]:
     """Give the caller a temporary path; publish without replacing existing data."""

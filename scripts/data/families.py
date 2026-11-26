@@ -15,8 +15,13 @@ def family_structure(episodes: list[dict], families: list[dict]) -> dict:
     return {
         'family_count': len(families),
         'size_histogram': {str(size): count for size, count in sorted(sizes.items())},
-        'contiguous_members': all(f['episode_ids'] == list(range(f['episode_ids'][0], f['episode_ids'][-1] + 1)) for f in families),
-        'equal_lengths_within_families': all(len({episodes[i]['length'] for i in f['episode_ids']}) == 1 for f in families),
+        'contiguous_members': all(
+            f['episode_ids'] == list(range(f['episode_ids'][0], f['episode_ids'][-1] + 1))
+            for f in families
+        ),
+        'equal_lengths_within_families': all(
+            len({episodes[i]['length'] for i in f['episode_ids']}) == 1 for f in families
+        ),
     }
 
 
@@ -43,31 +48,74 @@ def inspect_families(handle: h5py.File, episodes: list[dict]) -> dict:
     }
 
 
+def require_fields(value: dict, fields: set[str], context: str) -> None:
+    """Report malformed manifest objects at their boundary, before indexing."""
+    if not isinstance(value, dict):
+        raise ValueError(f'{context} must be an object')
+    missing = fields - value.keys()
+    if missing:
+        raise ValueError(f'{context} missing required fields: {", ".join(sorted(missing))}')
+
+
+def _validate_family_record(family: dict, family_id: int, hashes: list[str]) -> None:
+    context = f'family {family_id}'
+    require_fields(family, {'family_id', 'initial_state_sha256', 'episode_ids'}, context)
+    if type(family['family_id']) is not int or family['family_id'] != family_id:
+        raise ValueError(f'{context}: family_id must equal its ordered position')
+    ids = family['episode_ids']
+    if not isinstance(ids, list) or not ids:
+        raise ValueError(f'{context}: episode_ids must be a nonempty list')
+    for episode_id in ids:
+        if type(episode_id) is not int or not 0 <= episode_id < len(hashes):
+            raise ValueError(f'{context}: invalid episode_id {episode_id!r}')
+    if ids != sorted(set(ids)):
+        raise ValueError(f'{context}: episode_ids must be sorted and unique')
+    for episode_id in ids:
+        if hashes[episode_id] != family['initial_state_sha256']:
+            raise ValueError(f'{context}: initial_state_sha256 does not match episode {episode_id}')
+
+
+def _validate_known_pusht_structure(episodes: list[dict], families: list[dict]) -> None:
+    if len(families) != 185:
+        raise ValueError('Verified PushT source requires 185 families')
+    for family in families:
+        start = 101 * family['family_id']
+        if family['episode_ids'] != list(range(start, start + 101)):
+            raise ValueError(f"family {family['family_id']}: verified PushT requires 101 contiguous episodes")
+        if len({episodes[i]['length'] for i in family['episode_ids']}) != 1:
+            raise ValueError(f"family {family['family_id']}: verified PushT requires equal episode lengths")
+
+
 def validate_families(episodes: list[dict], evidence: dict, hdf5_sha256: str) -> None:
     """Reject inconsistent membership and verify this archive's observed 185x101 rule."""
-    if evidence.get('grouping_method') != GROUPING_METHOD:
-        raise ValueError('Unsupported family grouping method')
-    families, hashes = evidence['families'], evidence['episode_initial_state_sha256']
-    if not families or len(hashes) != len(episodes) or any(not isinstance(h, str) or not re.fullmatch('[0-9a-f]{64}', h) for h in hashes):
-        raise ValueError('Missing or invalid family initial-state hashes')
+    require_fields(evidence, {
+        'grouping_method', 'families', 'episode_initial_state_sha256', 'family_structure',
+    }, 'family evidence')
+    if evidence['grouping_method'] != GROUPING_METHOD:
+        raise ValueError(f'Unsupported grouping_method: {evidence["grouping_method"]!r}')
+    families = evidence['families']
+    if not isinstance(families, list) or not families:
+        raise ValueError('families must be a nonempty list')
+    hashes = evidence['episode_initial_state_sha256']
+    if not isinstance(hashes, list) or len(hashes) != len(episodes):
+        raise ValueError('episode_initial_state_sha256 must have one hash per episode')
+    for episode_id, digest in enumerate(hashes):
+        if not isinstance(digest, str) or not re.fullmatch('[0-9a-f]{64}', digest):
+            raise ValueError(f'episode_initial_state_sha256[{episode_id}] must be a SHA-256 hex digest')
     seen, seen_hashes, previous_first = [], set(), -1
     for family_id, family in enumerate(families):
+        _validate_family_record(family, family_id, hashes)
         ids, digest = family['episode_ids'], family['initial_state_sha256']
-        if (type(family['family_id']) is not int or family['family_id'] != family_id
-                or not ids or any(type(i) is not int or not 0 <= i < len(episodes) for i in ids)
-                or ids != sorted(set(ids)) or ids[0] <= previous_first
-                or digest in seen_hashes or any(hashes[i] != digest for i in ids)):
-            raise ValueError('Inconsistent family IDs, hashes or episode membership')
+        if ids[0] <= previous_first:
+            raise ValueError(f'family {family_id}: families must follow first-episode order')
+        if digest in seen_hashes:
+            raise ValueError(f'family {family_id}: initial_state_sha256 already belongs to another family')
         previous_first = ids[0]
         seen.extend(ids)
         seen_hashes.add(digest)
     if sorted(seen) != list(range(len(episodes))):
         raise ValueError('Family membership must cover every episode exactly once')
-    structure = family_structure(episodes, families)
-    if evidence.get('family_structure') != structure:
-        raise ValueError('Family structure summary does not match membership')
+    if evidence['family_structure'] != family_structure(episodes, families):
+        raise ValueError('family_structure summary does not match membership')
     if hdf5_sha256 == PUSHT_HDF5_SHA256:
-        expected = [list(range(101 * i, 101 * (i + 1))) for i in range(185)]
-        if ([f['episode_ids'] for f in families] != expected
-                or not structure['equal_lengths_within_families']):
-            raise ValueError('Verified PushT source requires 185 contiguous families of 101 equal-length episodes')
+        _validate_known_pusht_structure(episodes, families)

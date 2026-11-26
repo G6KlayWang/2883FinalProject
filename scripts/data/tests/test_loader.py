@@ -8,10 +8,9 @@ import unittest
 import h5py
 import numpy as np
 
-from fixtures import make_dataset
+from fixtures import DOWNLOAD, make_dataset
 from scripts.data.schema import inspect_file
 from scripts.data.splits import build_manifest
-from test_splits import DOWNLOAD
 
 
 def worker_read(dataset, index, queue):
@@ -172,3 +171,34 @@ class LoaderTests(unittest.TestCase):
             f['action'][0] = [12., 12.]
         with self.assertRaisesRegex(ValueError, 'changed'):
             self.loader.TrajectoryDataset(self.prepared, 'train')[0]
+
+    def test_diagnostic_episode_split_requires_explicit_opt_in(self):
+        manifest = build_manifest(inspect_file(self.path), DOWNLOAD, 'candidate', split_unit='episode')
+        with self.assertRaisesRegex(ValueError, 'diagnostic'):
+            self.loader.PreparedData(self.path, manifest)
+        prepared = self.loader.PreparedData(self.path, manifest, allow_diagnostic_episode_split=True)
+        self.assertTrue(prepared.diagnostic_episode_split)
+        self.assertEqual(len(self.loader.TrajectoryDataset(prepared, 'train')), 3)
+        self.assertFalse(self.prepared.diagnostic_episode_split)
+
+    def test_consistent_but_wrong_manifest_families_rejected_against_hdf5(self):
+        from scripts.data.splits import validate_manifest
+        manifest = copy.deepcopy(self.manifest)
+        first, second = manifest['families']
+        first_hash, second_hash = first['initial_state_sha256'], second['initial_state_sha256']
+        first['initial_state_sha256'], second['initial_state_sha256'] = second_hash, first_hash
+        manifest['episode_initial_state_sha256'] = [second_hash, first_hash]
+        validate_manifest(manifest)  # Internally valid; only comparison to the bytes catches it.
+        with self.assertRaisesRegex(ValueError, 'family membership'):
+            self.loader.PreparedData(self.path, manifest)
+
+    def test_diagnostic_warning_and_split_unit_follow_reader_provenance(self):
+        manifest = build_manifest(inspect_file(self.path), DOWNLOAD, 'candidate', split_unit='episode')
+        with self.assertLogs('scripts.data.loader', level='WARNING') as logged:
+            prepared = self.loader.PreparedData(self.path, manifest, allow_diagnostic_episode_split=True)
+        self.assertIn('diagnostic', ' '.join(logged.output))
+        sample = self.loader.TrajectoryDataset(prepared, 'train')[0]
+        self.assertEqual(sample['metadata']['split_unit'], 'episode')
+        labels = self.loader.MeasurementReader(prepared, purpose='probe').read(0, [0, 5])
+        self.assertEqual(labels['metadata']['split'], 'train')
+        self.assertEqual(labels['metadata']['split_unit'], 'episode')

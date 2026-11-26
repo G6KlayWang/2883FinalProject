@@ -6,10 +6,9 @@ import unittest
 
 import h5py
 import numpy as np
-from fixtures import make_dataset
+from fixtures import DOWNLOAD, make_dataset
 from scripts.data.schema import inspect_file
 from scripts.data.splits import build_manifest, validate_manifest
-from test_splits import DOWNLOAD
 
 
 class FamilyTests(unittest.TestCase):
@@ -75,4 +74,26 @@ class FamilyTests(unittest.TestCase):
         schema = copy.deepcopy(self.schema)
         schema['duplicate_episode_groups'] = [[manifest['splits']['train'][0], manifest['splits']['test'][0]]]
         with self.assertRaisesRegex(ValueError, 'duplicate'):
+            build_manifest(schema, DOWNLOAD, 'candidate')
+
+    def test_missing_family_evidence_fields_have_actionable_value_errors(self):
+        for field in ('grouping_method', 'families', 'episode_initial_state_sha256', 'family_structure'):
+            with self.subTest(field=field):
+                manifest = build_manifest(self.schema, DOWNLOAD, 'candidate')
+                del manifest[field]
+                with self.assertRaisesRegex(ValueError, field):
+                    validate_manifest(manifest)
+
+    def test_missing_family_record_fields_have_actionable_value_errors(self):
+        for field in ('family_id', 'initial_state_sha256', 'episode_ids'):
+            with self.subTest(field=field):
+                manifest = build_manifest(self.schema, DOWNLOAD, 'candidate')
+                del manifest['families'][0][field]
+                with self.assertRaisesRegex(ValueError, field):
+                    validate_manifest(manifest)
+
+    def test_build_reports_missing_family_record_field_without_key_error(self):
+        schema = copy.deepcopy(self.schema)
+        del schema['families'][0]['family_id']
+        with self.assertRaisesRegex(ValueError, 'family_id'):
             build_manifest(schema, DOWNLOAD, 'candidate')
