@@ -1,0 +1,32 @@
+# ENCODER-002: one-command full encoder training
+
+## User instruction and scope
+
+The user explicitly requests (1) a shell script to start training with one command, (2) terminal progress bars, (3) recorded training history such as losses, and (4) full training, with tasks distributed through the existing Herdr team. This supersedes the earlier blanket full-training prohibition for this encoder task. Merge still requires a separate user decision. Do not overwrite AGENTS.md or disturb existing user files, checkpoints, or running work.
+
+The preceding implementation and Arm A diagnostic passed both reviewers and merged as main `30c5b69d3542ef07b96fe36b7334dd9d3965b627`; reviewed implementation is `089b079`. Start a fresh feature worktree from verified merged main. The original repository and prior worktrees remain preserved.
+
+The saved `production-proposed.json` is the concrete recommended recipe. A single user recipe question is pending in the orchestrator session; independent implementation proceeds immediately. Do not treat elapsed time, an agent recommendation, or the full-training request as an answer to that recipe question. Record the actual answer before changing policy statuses and launching dependent production runs. No repeat permission question for already-authorized implementation, necessary setup, cache preparation, version sync, or full training once the recipe is settled.
+
+## Design and implementation
+
+Extend the reviewed pipeline rather than create another trainer. Add a committed, documented `.sh` launcher with sensible path/config arguments and explicit immutable code/config/run identities. Commands are saved files and launched with one visible line; do not repeat long terminal heredoc entry. Deliver source through the Git manager's reviewed sync workflow. Use Jupyter/Claude Chrome for visible server operation, with the existing browser worker under the coordinator; no silent SSH fallback.
+
+Provide a readable terminal progress bar per active run, or a single queue display showing each run. Include arm/weight/seed, step/total, percent, losses, learning rate, throughput and ETA once measurable. Bound refresh/log overhead. Keep machine-readable history free of terminal escape codes; non-TTY output must remain useful. Preserve training numerics, batch order, RNG streams and exact resume behavior.
+
+Record the optimization history, not simulator rollout videos: durable per-step total/invariance/regularizer losses, applicable components, learning rate, gradient norms at the existing configured interval, step/data timing, throughput, runtime and GPU-memory observations, plus resolved configuration, source/data/environment identities and checkpoints. Reuse existing JSONL. Add useful CSV export and loss/LR/time plots or a reproducible plotting command if practical; never invent measurements not collected. A logger/display must not perform extra model forwards or change gradients.
+
+Implement a resumable queue for the documented ten first-seed candidates, up to one independent job per available GPU UUID (four on last inspection). Keep pending/running/completed/failed states and exit records, exclusive device locks, output collision checks, resource limits, interruption handling and explicit resume. Never silently restart failed runs or alter scientific controls. Preserve artifacts from ENCODER-001 separately. Selected second seeds require actual complete candidate evaluation and the existing selection-generated receipts; never guess their weights. No Diffusion Forcing, planning, test-split use or automatic grid/budget extension.
+
+Use the reviewed resized uint8 cache for the approved frame population; validate it and share it read-only. Plan train/validation caching and downstream evaluation within disk/RAM reserves; avoid duplicate full-file checks and competing cache builds. Capacity validation is part of the authorized launch: prefer a bounded initial segment of the first real production run with exact checkpoint continuation, so its steps count toward the original 30,000. If the approved batch cannot run or resource limits fail, stop and report rather than change batch, precision, regularizers or accumulate gradients silently. Do not infer four-job throughput from the batch-16 smoke.
+
+## Team workflow
+
+1. GitHub manager: verify live main, prepare fresh `feat/encoder-launcher` worktree, hand ownership to Executor; own all commits/PR/sync identity checks.
+2. Executor: Superpowers plan/TDD, clean cohesive code, focused regressions for progress/logging neutrality, launcher failure/queue/resume identity and argument handling; freeze exact source and release ownership. No Git or remote model execution.
+3. Research Reviewer: check saved recipe against research question and user choice; check instrumentation does not change science, cache/sampling/selection and production continuation. Report concrete blockers and bounded fixes. Do not expand into optional research.
+4. PR Reviewer: independent exact-head/base code/operational review before server execution. No merge. Review launch evidence after launch.
+5. Server coordinator: refresh bounded hardware/resource inventory via existing Chrome worker as necessary, prepare exact saved scripts and executable one-line commands, check capacity, then start the approved full encoder queue visibly after both reviews and exact sync. No new subagents.
+6. Orchestrator: communicate the actual recipe decision, route findings, and report actual run progress/paths rather than launch intention. Full training may take hours; the immediate task milestone is a verified healthy full-training launch with visible progress and durable history, not a claim all thirteen runs have finished.
+
+At most three workers actively working simultaneously; idle persistent sessions do not count. Use existing Herdr aliases. Keep handoffs/reviews under `doc/team/`; generated data, logs, figures and checkpoints stay ignored or on the server. User credentials must never enter source or messages.
