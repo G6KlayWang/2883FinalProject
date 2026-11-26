@@ -1,0 +1,123 @@
+{
+  "profile": "smoke",
+  "arm": "A",
+  "seed": 0,
+  "rho": 10.0,
+  "recipe_status": "diagnostic",
+  "frame_policy": "phase0",
+  "aprime_convention": "common",
+  "native_lambda": 0.05,
+  "stem": "standard",
+  "projector_hidden": 2048,
+  "feature_dim": 128,
+  "projections": 1024,
+  "view_forward": "separate",
+  "input_normalization": "identity_0_1",
+  "tf32_matmul": false,
+  "tf32_cudnn": false,
+  "augment": {
+    "brightness": 0.4,
+    "contrast": 0.4,
+    "saturation": 0.2,
+    "hue": 0.1,
+    "jitter_probability": 0.8,
+    "blur_probability": 0.5,
+    "blur_sigma": [
+      0.1,
+      1.0
+    ],
+    "noise_probability": 0.5,
+    "noise_std": 0.02,
+    "blur_kernel": 3,
+    "order": [
+      "brightness",
+      "contrast",
+      "saturation",
+      "hue",
+      "blur",
+      "noise"
+    ]
+  },
+  "optimizer": {
+    "batch_size": 16,
+    "max_updates": 20,
+    "warmup_updates": 2,
+    "peak_lr": 0.0005,
+    "final_lr": 5e-07,
+    "weight_decay": 0.0005,
+    "betas": [
+      0.9,
+      0.999
+    ],
+    "epsilon": 1e-08
+  },
+  "runtime": {
+    "workers": 4,
+    "prefetch": 2,
+    "intraop_threads": 2,
+    "interop_threads": 1,
+    "max_seconds": 600.0,
+    "max_frames": 256,
+    "checkpoint_every": 10,
+    "gradient_terms_every": 1,
+    "keep_checkpoints": 2,
+    "disk_reserve_gib": 40.0,
+    "memory_limit_gib": 200.0
+  },
+  "grids": {
+    "status": "proposed",
+    "A": [
+      2.5,
+      10.0,
+      40.0
+    ],
+    "B": [
+      2.5,
+      10.0,
+      40.0
+    ],
+    "C": [
+      0.25,
+      1.0,
+      4.0
+    ]
+  },
+  "gate": {
+    "status": "proposed",
+    "enabled": true,
+    "mean_limit": 0.1,
+    "eigenvalue_min": 0.5,
+    "eigenvalue_max": 2.0,
+    "gaussian_kurtosis_limit": 0.5,
+    "laplace_kurtosis_min": 1.5
+  },
+  "probe": {
+    "status": "proposed",
+    "hidden": 256,
+    "epochs": 50,
+    "batch_size": 256,
+    "learning_rate": 0.001,
+    "seed": 1729,
+    "variance_floor": 1e-08,
+    "visibility": "expanded_box",
+    "visibility_margin": 15.0,
+    "tie_fraction": 0.02,
+    "tie_denominator_floor": 1e-12,
+    "weight_decay": 0.0,
+    "betas": [
+      0.9,
+      0.999
+    ],
+    "epsilon": 1e-08,
+    "linear_rcond": 1e-10,
+    "feature_std_epsilon": 1e-08
+  },
+  "c_transform": {
+    "status": "proposed",
+    "mode": "if_moments_fail",
+    "mean_limit": 0.1,
+    "eigenvalue_min": 0.5,
+    "eigenvalue_max": 2.0,
+    "eigenvalue_floor": 0.05
+  }
+}
