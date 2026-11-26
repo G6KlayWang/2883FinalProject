@@ -107,12 +107,19 @@ class QueueStore:
         known = {r["run_id"] for r in self.state["runs"]}
         if retry_ids - known:
             raise ValueError("Unknown explicit retry run IDs")
-        failed = [r for r in self.state["runs"] if r["state"] == "failed"]
-        if any(r["run_id"] not in retry_ids for r in failed):
-            raise ValueError(
-                "Queue contains failed runs; explicit --retry required, no automatic restart"
+        for run in self.state["runs"]:
+            if run["state"] != "failed":
+                continue
+            # Reconciliation already promotes demonstrably clean checkpoints.
+            # A retry request cannot bypass an unresolved/corrupt checkpoint.
+            run["parked"] = True
+            self.event(
+                (
+                    "retry-unavailable-parked"
+                    if run["run_id"] in retry_ids
+                    else "failed-run-parked"
+                ),
+                run_id=run["run_id"],
+                reason=run.get("recovery_error"),
             )
-        for run in failed:
-            run["state"] = "paused"
-            self.event("explicit-retry-request", run_id=run["run_id"])
         self.save()

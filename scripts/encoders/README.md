@@ -60,16 +60,29 @@ Preparation/status/explicit continuation use the same saved script:
 ENCODER_PYTHON="$PY" bash scripts/encoders/launch.sh --code-revision "$SHA" --hdf5 "$H5" --manifest "$MAN" --cache-root "$CACHE_ROOT" --output "$OUT" --prepare-only
 ENCODER_PYTHON="$PY" bash scripts/encoders/launch.sh --output "$OUT" --status
 # Repeat the original full command with --resume to continue clean paused runs.
-# A failed run additionally requires --retry RUN_ID, and a clean checkpoint.
+# Failed runs with unresolved updates stay parked; --retry cannot bypass them.
 ```
 
 Queue resume requires unchanged code/config/source/cache/receipt/environment and
 all originally assigned GPU UUIDs. Other display/queue controls stay outside
 `RunConfig` and the model run identity. A failed attempt is never automatically
-restarted. Nonfinite values or a hard crash with unresolved updates are preserved
-and reported; no checkpoint rollback is provided. Restarting from update0 in a
-new directory is a new declared attempt requiring a recorded coordinator/team
-decision, not an automatic launcher action.
+restarted. With exclusive original-GPU leases and idle hardware, explicit resume
+reconciles each actual ledger and hash/identity-verified checkpoint, including
+cleanly finished orphan trainers. Clean runs become paused/completed; unresolved
+attempts remain failed and parked. Unaffected S3 jobs may continue, but the queue
+returns an incomplete-matrix status and selection still requires all ten final
+candidates. Parked runs never satisfy S1/S2 capacity gates. Nonfinite stops remain
+preserved failures; no automatic checkpoint rollback is provided.
+
+A later explicit decision may authorize **one failed run** to restart from zero:
+repeat the original command with `--resume --restart-from-zero RUN_ID
+--restart-decision "recorded later decision/reference"`. This is a capability,
+not authorization to invoke it in the initial launch. It archives the entire
+failed directory under `discarded/`, preserves prior attempts/history/checkpoints,
+and records discarded completed/attempted counts and last-known runtime (an
+unobserved hard-crash tail stays unknown). Controls and original GPU remain fixed.
+Extra discarded-work compute must be part of that later decision. Between-update
+resource-guard stops save a current checkpoint before reporting the guard failure.
 
 Shared cache preparation holds an exclusive lock, reads at most one decoded
 source image chunk (<=64MiB) through one persistent verified reader and applies

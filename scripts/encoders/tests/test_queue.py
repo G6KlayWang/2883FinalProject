@@ -43,10 +43,10 @@ class QueueTests(unittest.TestCase):
                 {"completed_updates": 0, "attempted_updates": 1},
                 "fixture failure",
             )
-            with self.assertRaisesRegex(ValueError, "failed|retry"):
-                store.resume_failed(set())
+            store.resume_failed(set())
+            self.assertTrue(store.run("A-low")["parked"])
             store.resume_failed({"A-low"})
-            self.assertEqual(store.run("A-low")["state"], "paused")
+            self.assertEqual(store.run("A-low")["state"], "failed")
             self.assertEqual(store.run("A-low")["gpu_uuid"], "GPU-one")
             with self.assertRaisesRegex(ValueError, "identity"):
                 state.QueueStore(
@@ -321,8 +321,8 @@ class QueueTests(unittest.TestCase):
             self.assertEqual(store.run("pending")["state"], "pending")
             self.assertFalse((store.root / "runs/pending").exists())
             self.assertEqual(store.run("first")["attempts"][-1]["exit_code"], 130)
-            with self.assertRaisesRegex(ValueError, "retry"):
-                store.resume_failed(set())
+            store.resume_failed(set())
+            self.assertEqual(store.run("failure")["state"], "failed")
 
     def test_watchdog_begins_at_ready_and_only_requests_graceful_stop(self):
         queue, state, devices = (

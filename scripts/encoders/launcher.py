@@ -20,6 +20,7 @@ from scripts.encoders.queue import QueueRunner, render_status
 from scripts.encoders.queue_state import QueueStore
 from scripts.encoders.recipe import load_approved_recipe
 from scripts.encoders.runs import resolve_run
+from scripts.encoders.recovery import reconcile_queue, restart_from_zero
 
 
 CONFIGS = Path(__file__).parent / "configs"
@@ -210,6 +211,17 @@ def main() -> None:
     parser.add_argument("--status", action="store_true")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--retry", nargs="*", default=[])
+    parser.add_argument(
+        "--restart-from-zero",
+        nargs="+",
+        default=[],
+        metavar="RUN_ID",
+        help="Later explicitly authorized failed-run restart; preserve prior directory",
+    )
+    parser.add_argument(
+        "--restart-decision",
+        help="Recorded later decision authorizing extra discarded-work compute",
+    )
     parser.add_argument("--repeat-config-directory", type=Path)
     parser.add_argument("--selection-report", type=Path)
     args = parser.parse_args()
@@ -235,6 +247,14 @@ def main() -> None:
         )
     if args.prepare_only and args.resume:
         parser.error("--prepare-only cannot resume a model queue")
+    if args.restart_from_zero and (not args.resume or not args.restart_decision):
+        parser.error(
+            "--restart-from-zero requires --resume and a later recorded --restart-decision"
+        )
+    if set(args.restart_from_zero) & set(args.retry):
+        parser.error(
+            "Choose restart-from-zero or checkpoint retry for each run, not both"
+        )
     if args.retry and not args.resume:
         parser.error("--retry requires explicit --resume")
     for key in (
@@ -309,16 +329,20 @@ def main() -> None:
                 "preflight", inventory=inventory, budget=budget, preparation=prep
             )
             if args.resume:
-                # A supervisor crash is never treated as a successful pause.
+                # Leases and idle-GPU preflight establish no live trainer owner.
                 for run in store.state["runs"]:
                     if (
                         run["gpu_uuid"] is not None
                         and run["gpu_uuid"] not in args.gpu_uuids
                     ):
                         raise ValueError("Resume leases omit an original GPU UUID")
-                    if run["state"] == "running":
-                        run["state"] = "failed"
-                store.save()
+                reconcile_queue(store, leases)
+                for run_id in args.restart_from_zero:
+                    if run_id not in {run["run_id"] for run in store.state["runs"]}:
+                        raise ValueError("Unknown restart-from-zero run ID")
+                    restart_from_zero(
+                        store, run_id, leases, decision=args.restart_decision
+                    )
                 store.resume_failed(set(args.retry))
             elif args.selection_report:
                 store.state["phase"] = "S3"

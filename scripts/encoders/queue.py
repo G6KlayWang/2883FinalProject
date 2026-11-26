@@ -232,7 +232,9 @@ class QueueRunner:
             )
             if active["child"].poll() is None:
                 try:
-                    os.killpg(active["child"].pid, signal.SIGTERM)
+                    # Workers share the process group; only the trainer handles
+                    # graceful boundary stops and owns DataLoader shutdown.
+                    os.kill(active["child"].pid, signal.SIGTERM)
                 except ProcessLookupError:
                     pass
         deadline = time.monotonic() + self.grace
@@ -265,7 +267,13 @@ class QueueRunner:
         for run_id, target in targets.items():
             run = self.store.run(run_id)
             attempt = run["attempts"][-1]
-            report = attempt["report"]
+            report = attempt.get("report")
+            if report is None or report.get("completed_updates") != target:
+                checks[run_id] = {
+                    "passed": False,
+                    "reason": "Recovered checkpoint lacks a matching capacity timing report",
+                }
+                continue
             reports.append(report)
             rows = read_history(self.store.root / "runs" / run_id / "metrics.jsonl")
             start = (
@@ -282,7 +290,7 @@ class QueueRunner:
                 max_seconds=run["max_seconds"],
                 phase=phase,
             )
-        overlap = overlap_seconds(reports)
+        overlap = overlap_seconds(reports) if len(reports) == len(targets) else 0.0
         memory = resources["peak_working_set_bytes"]
         memory_limit = (
             min(r["memory_limit_gib"] for r in self.store.state["runs"]) * 1024**3
@@ -316,6 +324,16 @@ class QueueRunner:
 
     def _phase(self, phase: str, stop: StopRequest) -> int:
         targets = self._targets(phase)
+        failed = [
+            run_id for run_id in targets if self.store.run(run_id)["state"] == "failed"
+        ]
+        if phase in ("S1", "S2") and failed:
+            self.store.state["blocked_reason"] = (
+                "Parked failures cannot satisfy capacity gates"
+            )
+            self.store.state["incomplete_runs"] = failed
+            self.store.save()
+            return 2
         gate = (
             self.store.root / f"{phase}-start-{time.time_ns()}.json"
             if phase in ("S1", "S2")
@@ -356,7 +374,25 @@ class QueueRunner:
                 for k, target in targets.items()
                 if self.store.run(k)["completed_updates"] < target
             ]
-            if not unfinished and not self.active:
+            runnable = [run for run in unfinished if run["state"] != "failed"]
+            if not runnable and not self.active:
+                if unfinished:
+                    self.store.state["incomplete_runs"] = [
+                        run["run_id"] for run in unfinished
+                    ]
+                    self.store.save()
+                    self.store.event(
+                        "matrix-incomplete", run_ids=self.store.state["incomplete_runs"]
+                    )
+                    for run in self.store.state["runs"]:
+                        path = self.store.root / "runs" / run["run_id"]
+                        if (
+                            run["state"] == "completed"
+                            and not (path / "history.csv").exists()
+                        ):
+                            export_csv(path / "metrics.jsonl", path / "history.csv")
+                    self._show(force=True)
+                    return 2
                 break
             # One mandatory source/cache verification in flight; ready means the
             # next startup may proceed without serializing whole training jobs.

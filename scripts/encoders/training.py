@@ -332,7 +332,16 @@ class Trainer:
                     if should_stop is not None and should_stop():
                         last_checkpoint = self._checkpoint()
                         break
-                    check_resources(self.output, self.config.runtime)
+                    try:
+                        check_resources(self.output, self.config.runtime)
+                    except (OSError, MemoryError):
+                        # This guard runs before reserving an update, so model,
+                        # optimizer and RNG state are clean and resumable.
+                        self.model_seconds = (
+                            initial_seconds + time.monotonic() - started
+                        )
+                        self._checkpoint()
+                        raise
                     if self.attempted_updates >= self.config.optimizer.max_updates:
                         raise ValueError("Lifetime attempted update budget exhausted")
                     self.attempted_updates += 1
