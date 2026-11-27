@@ -20,6 +20,14 @@ from scripts.encoders.runtime import (
     runtime_record,
 )
 from scripts.encoders.training import Trainer
+from scripts.encoders.succession import (
+    load_succession,
+    prepare_handover,
+    publish_handover,
+    finalize_report,
+)
+from scripts.encoders.progress import ProgressDisplay
+from scripts.encoders.interruptions import StopRequest, stop_signals
 
 
 def main() -> None:
@@ -31,6 +39,8 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--code-revision", required=True)
     parser.add_argument("--resume", type=Path)
+    parser.add_argument("--succession-receipt", type=Path)
+    parser.add_argument("--finalize-only", action="store_true")
     parser.add_argument("--stop-at", type=int)
     parser.add_argument(
         "--candidate", help="Declared first-seed run_id from the fixed run matrix"
@@ -40,10 +50,24 @@ def main() -> None:
         type=Path,
         help="Approved selection receipt for a generated seed1 config",
     )
+    parser.add_argument(
+        "--start-gate",
+        type=Path,
+        help="Operational queue barrier after startup verification",
+    )
+    parser.add_argument("--progress", choices=("auto", "off"), default="auto")
+    parser.add_argument(
+        "--ready-file",
+        type=Path,
+        help="Queue startup handshake after mandatory verification",
+    )
     args = parser.parse_args()
     logging.basicConfig(
         level=logging.DEBUG, format="%(asctime)s %(levelname)s %(message)s"
     )
+    receipt = load_succession(args.succession_receipt, args.code_revision)
+    if args.finalize_only and not args.resume:
+        parser.error("--finalize-only requires --resume")
     config = load_config(args.config)
     selection_report = (
         json.loads(args.selection_report.read_text()) if args.selection_report else None
@@ -80,11 +104,25 @@ def main() -> None:
             "environment": environment_record(),
             "gpu_uuid": uuid,
         }
+        if args.finalize_only:
+            if stop_at != config.optimizer.max_updates:
+                raise ValueError("Finalization must target the unchanged full budget")
+            path = finalize_report(
+                args.output, args.resume, config, identity, frames, receipt
+            )
+            logging.info("FINALIZATION REPORT %s", path)
+            return
+        handover = (
+            prepare_handover(args.output, receipt, identity) if args.resume else None
+        )
         model = build_encoder(config.seed, config.projector_hidden)
         torch.cuda.reset_peak_memory_stats()
         trainer = Trainer(
             model, config, args.output, identity, "cuda:0", resume=args.resume
         )
+        # _restore already verified this hash; retention may remove the input later.
+        resume_sha256 = trainer.last_checkpoint_sha256 if args.resume else None
+        publish_handover(args.output, handover)
         preparation_seconds = time.monotonic() - preparation_started
         if config.profile == "smoke":
             selected_ids = frames.ids.tolist()
@@ -95,8 +133,9 @@ def main() -> None:
             else:
                 write_json_new(selection_path, selected_ids)
         attempt_start = trainer.completed_updates
+        attempt_label = f"attempt-{attempt_start:06d}-{time.time_ns()}"
         write_json_new(
-            args.output / f"attempt-{attempt_start:06d}-started.json",
+            args.output / f"{attempt_label}-started.json",
             {
                 "completed_before_attempt": attempt_start,
                 "stop_at": stop_at,
@@ -104,9 +143,45 @@ def main() -> None:
                 "status": "started-not-yet-passed",
             },
         )
-        checkpoint = trainer.run(frames, stop_at=stop_at)
+        ready = {
+            "status": "ready",
+            "completed_updates": attempt_start,
+            "config_hash": config.digest(),
+            "gpu_uuid": uuid,
+            "code_revision": args.code_revision,
+            "preparation_seconds": preparation_seconds,
+        }
+        progress = ProgressDisplay(
+            f"{config.arm} rho{config.rho:g} seed{config.seed}",
+            config.optimizer.max_updates,
+        )
+        stop = StopRequest()
+        training_started_at = None
+        try:
+            with stop_signals(stop):
+                if args.ready_file:
+                    write_json_new(args.ready_file, ready)
+                while args.start_gate and not args.start_gate.exists() and not stop():
+                    time.sleep(0.1)
+                training_started_at = time.time()
+                checkpoint = trainer.run(
+                    frames,
+                    stop_at=stop_at,
+                    observer=progress.update if args.progress == "auto" else None,
+                    should_stop=stop,
+                )
+        finally:
+            progress.close()
         report = {
-            "status": "diagnostic" if config.profile == "smoke" else "candidate",
+            "status": (
+                "stopped"
+                if stop()
+                else ("diagnostic" if config.profile == "smoke" else "candidate")
+            ),
+            "stop_signal": stop.signal_number,
+            "training_started_at": training_started_at,
+            "training_finished_at": time.time(),
+            "gpu_total_memory_bytes": torch.cuda.get_device_properties(0).total_memory,
             "attempt_start_update": attempt_start,
             "completed_updates_this_attempt": trainer.completed_updates - attempt_start,
             "completed_updates": trainer.completed_updates,
@@ -120,7 +195,9 @@ def main() -> None:
             "config_hash": config.digest(),
             "source": frames.identity,
             "source_frame_count": len(frames),
-            "resumed_from_sha256": sha256_file(args.resume) if args.resume else None,
+            "resumed_from_sha256": resume_sha256,
+            "reporting_revision": args.code_revision,
+            "source_succession": handover,
             "restored_update_count": attempt_start,
             "restored_state_sections": (
                 [
@@ -147,9 +224,11 @@ def main() -> None:
                 else "Final checkpoint only; validation selection is separate."
             ),
         }
-        write_json_new(args.output / f"attempt-{attempt_start:06d}-report.json", report)
+        write_json_new(args.output / f"{attempt_label}-report.json", report)
         replace_json(args.output / "training_report.json", report)
         logging.info("TRAINING REPORT %s", report)
+        if stop():
+            raise SystemExit(130)
 
 
 if __name__ == "__main__":

@@ -95,14 +95,14 @@ class FrameCacheTests(unittest.TestCase):
         cache = implementation("image_cache")
         frames = self.frames.ImageFrames(self.prepared, "train", "phase0")
         output = Path(self.temp.name) / "failed"
-        original = self.frames.ImageFrames.__getitem__
+        original = cache.iter_resized_images
 
-        def fail_after_first(dataset, index):
-            if index == 1:
-                raise ValueError("fixture interrupted cache build")
-            return original(dataset, index)
+        def fail_after_first(dataset):
+            iterator = iter(original(dataset))
+            yield next(iterator)
+            raise ValueError("fixture interrupted cache build")
 
-        with patch.object(self.frames.ImageFrames, "__getitem__", fail_after_first):
+        with patch.object(cache, "iter_resized_images", fail_after_first):
             with self.assertRaisesRegex(ValueError, "interrupted"):
                 cache.build_image_cache(frames, output)
         self.assertFalse(output.exists())

@@ -1,5 +1,14 @@
 # Encoder Training Specification
 
+**Current execution status (ENCODER-002):** the user answered “Use the recommendation
+recipe,” approving the saved reviewed numerical recipe and full encoder training.
+The saved shell launcher, progress/history and exact staged queue are documented
+in [scripts/encoders/README.md](../scripts/encoders/README.md). Follow the updated
+[ENCODER-002 assignment](../doc/team/handoffs/encoder002-assignment.md), independent
+reviews and exact source sync. Earlier draft/proposed/no-implementation wording
+below is retained as historical design provenance; performance/convergence claims
+remain unvalidated. Merge and Diffusion Forcing/planning remain separate decisions.
+
 **Status:** Executor handoff draft, 2026-11-26. This document consolidates the research design, verified data preparation, and Research Reviewer recommendations. Writing it does **not** approve unresolved experimental choices or authorize training, including pilot runs.
 
 **Later task authorization:** the user has now requested implementation and a bounded single-arm smoke test. [ENCODER-001](../doc/team/handoffs/encoder001-assignment.md) defines that authorized diagnostic scope. Full training remains gated; this does not convert proposed production settings into accepted experimental decisions.

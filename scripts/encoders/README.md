@@ -1,13 +1,132 @@
 # Encoder pipeline
 
 Four image-only, randomly initialized encoder arms share the reviewed PushT data
-interfaces. `configs/production-proposed.json` and the 10+3 queue in
-`configs/run-sheet.json` are explicit proposals, not permission to train.
-Production entrypoints reject unapproved recipe, grid, gate, C-transform and probe
-policies. The C moment-matching policy is independent of the optional eligibility
-gate: disabling that gate does not disable C whitening or permit an unrepairable C.
-Changing an approval label requires the corresponding recorded team/user decision.
-No entrypoint launches another job or implements Diffusion Forcing/planning.
+interfaces. **ENCODER-002:** the user approved the saved recommendation. Executable
+`configs/production-approved.json` changes exactly five approval labels from the
+preserved `production-proposed.json`; `configs/recipe-approval.json` records the
+actual decision and reference hashes. Numerical settings below are the approved
+recipe, retaining their research provenance and unvalidated performance caveats.
+Merge remains separate; no entrypoint implements Diffusion Forcing or planning.
+
+## One-command approved queue
+
+After both reviews and exact sync, the Server coordinator uses the existing
+visible Chrome/Jupyter worker. Executor runs only local synthetic checks.
+Set `PY`, `SHA`, `H5`, `MAN`, `CACHE_ROOT`, `OUT`, and the four available GPU UUIDs
+to the verified environment, checkout, prepared inputs and fresh artifact paths.
+Use a new ENCODER-002 output directory, preserving ENCODER-001 diagnostics.
+
+```sh
+ENCODER_PYTHON="$PY" bash scripts/encoders/launch.sh --code-revision "$SHA" --hdf5 "$H5" --manifest "$MAN" --cache-root "$CACHE_ROOT" --output "$OUT" --gpu-uuids "$GPU1" "$GPU2" "$GPU3" "$GPU4"
+```
+
+This is a foreground, visible queue; Jupyter's terminal session persists when the
+browser disconnects. For explicit detached supervision, use the same saved command
+with `nohup env ENCODER_PYTHON="$PY" ... >"$OUT.supervisor.log" 2>&1 &`, then display
+that saved log with `tail -f`. The supervisor ignores SIGHUP, child stdout/stderr go
+to per-attempt log files, and a dead display disables itself without stopping
+training. SIGINT/SIGTERM request clean update-boundary checkpoints. No silent SSH,
+background remote fallback, or script generation through terminal heredocs.
+
+The launcher verifies the exact clean source checkout and approved recipe, serially
+prepares the train cache, then performs the following **production continuations**:
+
+1. S1: A-rho2.5-seed0 alone to200 updates.
+2. S2: same A checkpoint to400; B-rho2.5, C-rho0.25 and Aprime-rho0.210526 seed0
+   each to200, on four distinct GPUs. Starts are staggered until each mandatory
+   source/cache verification completes, then a shared start barrier releases
+   actual concurrent training. Reports require measured overlapping model time.
+3. After passing S2, build the validation cache serially while runs are paused.
+   S3 resumes those four toward30000 and schedules the other six as slots free.
+
+Every step counts toward the original30000; all runs retain the exact approved
+configuration,24h cumulative model cap, environment, code and original GPU UUID.
+The20min S1/S2 watchdog starts per trainer at `startup-ready`, excluding cold
+verification/preparation. It requests a graceful checkpoint stop and stops the
+queue. If exit is not observed after120s grace, record the owned PIDs for the
+coordinator; **no automatic SIGKILL, rollback, retry or recipe change** occurs.
+
+Capacity gates use observed history, excluding each segment's first20 updates:
+S1 median(update+data-wait) projected over30000 must fit half the24h cap; S2 elapsed
+model time plus projected remaining time must fit80%. Each peak GPU allocation
+must be below85% of its actual card capacity. S2 requires actual four-run overlap,
+cgroup working-set headroom, memory-event and CPU-throttling snapshots. Failed or
+missing evidence stops before S3. Recorded failed S1/S2 assessments latch the
+queue before phase entry on ordinary resume. Both failed and passed resource
+records stay immutable; passed evidence is reused only with unchanged bound queue/
+run identities and satisfied stage targets. No idle resampling, automatic reset
+or override is provided. No batch/precision/worker/grid/budget fallback.
+
+Preparation/status/explicit continuation use the same saved script:
+
+```sh
+# Optional train-cache preparation only; normal launch already does this.
+ENCODER_PYTHON="$PY" bash scripts/encoders/launch.sh --code-revision "$SHA" --hdf5 "$H5" --manifest "$MAN" --cache-root "$CACHE_ROOT" --output "$OUT" --prepare-only
+ENCODER_PYTHON="$PY" bash scripts/encoders/launch.sh --output "$OUT" --status
+# Repeat the original full command with --resume to continue clean paused runs.
+# Failed runs with unresolved updates stay parked; --retry cannot bypass them.
+```
+
+Queue resume requires unchanged code/config/source/cache/receipt/environment and
+all originally assigned GPU UUIDs. Other display/queue controls stay outside
+`RunConfig` and the model run identity. A failed attempt is never automatically
+restarted. With exclusive original-GPU leases and idle hardware, explicit resume
+reconciles each actual ledger and hash/identity-verified checkpoint, including
+cleanly finished orphan trainers. Clean runs become paused/completed; unresolved
+attempts remain failed and parked. Unaffected S3 jobs may continue, but the queue
+returns an incomplete-matrix status and selection still requires all ten final
+candidates. Parked runs never satisfy S1/S2 capacity gates. Nonfinite stops remain
+preserved failures; no automatic checkpoint rollback is provided.
+
+A later explicit decision may authorize **one failed run** to restart from zero:
+repeat the original command with `--resume --restart-from-zero RUN_ID
+--restart-decision "recorded later decision/reference"`. This is a capability,
+not authorization to invoke it in the initial launch. It archives the entire
+failed directory under `discarded/`, preserves prior attempts/history/checkpoints,
+and records discarded completed/attempted counts and last-known runtime (an
+unobserved hard-crash tail stays unknown). Controls and original GPU remain fixed.
+Extra discarded-work compute must be part of that later decision. Between-update
+resource-guard stops save a current checkpoint before reporting the guard failure.
+
+Shared cache preparation holds an exclusive lock, reads at most one decoded
+source image chunk (<=64MiB) through one persistent verified reader and applies
+exactly the reviewed resize/order. New caches are atomically published read-only.
+Reused cache metadata is checked during preparation; every trainer still performs
+all existing full HDF5/cache checks. Startup-ready prevents competing hash storms;
+no trust receipt or verification shortcut is introduced. A conservative13GiB
+future-output allowance is checked in addition to missing caches and the40GiB
+reserve. Existing source, caches, user files and running jobs are preserved.
+
+Artifacts: `queue_record.json`, atomic `queue_state.json`, append-only
+`queue_events.jsonl`, `logs/RUN-attempt.log`, startup-ready/barrier records,
+capacity reports including actual overlap/resources, and `runs/RUN/` containing
+resolved identity/config, attempts, per-step `metrics.jsonl`, checkpoints and
+training reports. Each completed run exports `history.csv`; optional standalone
+export can run on observed JSONL:
+
+```sh
+"$PY" -m scripts.encoders.history --history "$OUT/runs/A-rho2.5-seed0/metrics.jsonl" --csv "$EXPORT/history.csv"
+```
+
+CSV preserves absent gradient observations as empty fields. Logs include losses,
+LR, gradient norms at unchanged intervals, step/data timing, observed source-frame
+throughput, cumulative runtime and actual GPU allocated/reserved/peak memory.
+Terminal ETA is an estimate, not a measured completion guarantee. Loss curves
+never select weights or compare objectives across arms.
+
+Optional PNG plotting is `python -m scripts.encoders.history --history FILE --plot
+OUTPUT.png` with Matplotlib installed **in a separate plotting environment**.
+Do not install plotting packages or change the encoder environment/Pillow after
+training begins: all installed versions bind exact resume/cache identity.
+CSV/progress require no new runtime dependencies; optional plots do not delay launch.
+
+After all ten final candidates, use the reviewed extract/evaluate/selection tools
+below. No automatic weight selection from training loss or test/planning results.
+The three emitted seed1 configs and actual approved selection receipt may launch
+in a separate fresh queue by adding `--repeat-config-directory "$REPEATS"
+--selection-report "$SELECTION"` to the original command with a new `--output`.
+No guessed repeats or extra A-prime run. Full training may take hours; a healthy
+launch is not evidence that all thirteen jobs or scientific checks are finished.
 
 ## Environment and verification
 
@@ -132,7 +251,7 @@ frames from a seeded epoch permutation, dropping incomplete tails. Augmentations
 are keyed by seed/update/frame/view, so worker prefetch cannot advance committed
 sampler/RNG position. No production family reweighting is added.
 
-## Production interfaces — pending approval
+## Individual-run and evaluation interfaces
 
 Use a reviewed approved copy of the complete explicit config as `$CFG`, and a
 predeclared candidate ID from the run sheet. The following are interfaces for
@@ -253,3 +372,56 @@ Remaining operational work: the coordinator owns cross-directory smoke attempt
 accounting (M5); augmentation/label/cache throughput needs separately authorized
 profiling (M6); final test-set reporting needs new reviewed tooling after choices
 are locked (M7). Development entrypoints continue to refuse test rows.
+
+
+## Reporting repair for the interrupted ba914f6 queue
+
+The reporting revision captures the verified resume checkpoint hash before
+training; retention may then prune that input without breaking final reporting.
+One reviewed predecessor, `ba914f6bb20fb2052f8e63fbc53a8e8b38c73582`, is supported
+only through a coordinator-created, reviewed `--succession-receipt` binding the
+exact four interrupted checkpoints. This is not a general revision override.
+The launcher still verifies the actual checkout and exact binary diff.
+
+First finalize B without training, using its original approved inputs/config and
+GPU UUID, the corrected checkout revision, and its existing final checkpoint:
+
+```sh
+CUDA_VISIBLE_DEVICES="$B_GPU_UUID" "$PY" -m scripts.encoders.train \
+  --config "$APPROVED_CONFIG" --candidate B-rho2.5-seed0 \
+  --hdf5 "$H5" --manifest "$MAN" --cache "$CACHE_ROOT/train-phase0" \
+  --output "$QUEUE/runs/B-rho2.5-seed0" --code-revision "$NEW_SHA" \
+  --resume "$QUEUE/runs/B-rho2.5-seed0/step-030000.pt" --stop-at 30000 \
+  --succession-receipt "$SUCCESSION_RECEIPT" --finalize-only
+```
+
+This writes only `report-finalization-<receipt SHA256>.json`: zero updates, actual
+reporting/checkpoint revisions, unchanged ledger time, null unavailable telemetry,
+and the failed-attempt log pointer. The stale `training_report.json`, failed
+attempts, ledger and checkpoint remain unchanged. Then run the original launcher
+command with `--code-revision "$NEW_SHA" --resume --succession-receipt
+"$SUCCESSION_RECEIPT"`. Original physical GPU assignments still apply. No capacity
+assessment is rerun or rewritten. Queue/run historical revisions stay unchanged;
+a succession entry outside queue identity records the execution revision.
+A/C/Aprime write a new, immutable `source_succession.json` after verified restore;
+every subsequent checkpoint carries it. Old-form identity acceptance applies
+only to the receipt's exact checkpoint hash, with all other fields equal.
+B remains entirely old-revision training; A/C/Aprime transition after updates
+29307/29035/28294, and the remaining candidates train under the corrected revision.
+Extraction of B uses the same receipt and records both revisions.
+
+Receipt version1 keys: `predecessor_revision`, `successor_revision`,
+`source_diff_sha256` (exact `git diff --binary --full-index OLD NEW` bytes),
+`changed_files` (ordered `git diff --name-only OLD NEW` lines),
+`queue_identity_sha256`, `queue_state_sha256`, `queue_record_sha256`,
+`capacity_sha256`, `rollback_receipts` (two `{path, sha256}` objects),
+`failure_evidence` (supervisor log path and queue exit2), and `runs` keyed by the
+four exact run IDs. Each run binds `checkpoint_name`, `checkpoint_sha256`,
+`checkpoint_bytes`, `checkpoint_role`, `completed_updates`, `attempted_updates`,
+`model_seconds`, `config_hash`, `gpu_uuid`, `history_lines`, `history_sha256`,
+`ledger_sha256`, `run_record_sha256`, and `failed_attempt_log`.
+Canonical object hashes use `scripts.encoders.artifacts.identity_digest`;
+file hashes use raw bytes. Before publication the operational receipt creator
+must verify all four checkpoint binaries/CPU metadata, original identities,
+counts/cursors/RNG state, and finite contiguous histories. No checkpoint is
+rewritten. The receipt itself is hashed as raw bytes and never edited.
