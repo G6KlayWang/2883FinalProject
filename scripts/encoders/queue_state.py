@@ -9,12 +9,24 @@ from scripts.encoders.checkpoints import replace_json
 
 
 class QueueStore:
-    def __init__(self, root: Path, identity: dict, runs: list[dict], *, resume: bool):
+    def __init__(
+        self,
+        root: Path,
+        identity: dict,
+        runs: list[dict],
+        *,
+        resume: bool,
+        succession: dict | None = None,
+    ):
         self.root = Path(root)
         if resume:
             self.state = json.loads((self.root / "queue_state.json").read_text())
             if self.state["identity"] != identity:
-                raise ValueError("Queue identity changed; refuse resume")
+                if succession is None:
+                    raise ValueError("Queue identity changed; refuse resume")
+                from scripts.encoders.succession import validate_queue_succession
+
+                validate_queue_succession(self.root, self.state, identity, succession)
             if [r["run_id"] for r in self.state["runs"]] != [r["run_id"] for r in runs]:
                 raise ValueError("Queue run declarations changed")
         else:

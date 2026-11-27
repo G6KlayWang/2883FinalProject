@@ -94,8 +94,10 @@ class QueueRunner:
         watchdog_seconds: float = 1200,
         grace_seconds: float = 120,
         prepare_validation: Callable | None = None,
+        execution_revision: str | None = None,
     ):
         self.store, self.leases, self.command = store, leases, command
+        self.execution_revision = execution_revision
         self.stream = stream if stream is not None else sys.stderr
         self.resource_reader = resource_reader
         self.poll = poll_seconds
@@ -177,7 +179,7 @@ class QueueRunner:
                 ready = json.loads(active["ready"].read_text())
                 expected = {
                     "config_hash": run["config_hash"],
-                    "code_revision": run["code_revision"],
+                    "code_revision": self.execution_revision or run["code_revision"],
                     "gpu_uuid": active["gpu"],
                     "completed_updates": run["completed_updates"],
                 }

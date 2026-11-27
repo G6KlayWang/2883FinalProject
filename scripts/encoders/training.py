@@ -143,6 +143,8 @@ class Trainer:
         )
 
     def _restore(self, path: Path) -> None:
+        from scripts.encoders.succession import identity_matches
+
         ledger = json.loads((self.output / "run_state.json").read_text())
         if ledger.get("last_checkpoint_name") != Path(path).name or sha256_file(
             path
@@ -151,8 +153,14 @@ class Trainer:
         state = load_checkpoint(path)
         self.last_checkpoint_name = ledger["last_checkpoint_name"]
         self.last_checkpoint_sha256 = ledger["last_checkpoint_sha256"]
-        if state["identity"] != self.identity or any(
-            ledger.get(k) != v for k, v in self.identity.items()
+        ledger_identity = {key: ledger.get(key) for key in self.identity}
+        if not (
+            identity_matches(
+                state["identity"], self.identity, self.last_checkpoint_sha256
+            )
+            and identity_matches(
+                ledger_identity, self.identity, self.last_checkpoint_sha256
+            )
         ):
             raise ValueError("Checkpoint/config/source/code identity mismatch")
         count = state["completed_updates"]

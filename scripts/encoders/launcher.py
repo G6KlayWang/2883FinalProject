@@ -4,6 +4,8 @@ import argparse
 from dataclasses import replace
 import fcntl
 import json
+import hashlib
+import time
 from pathlib import Path
 import shutil
 import signal
@@ -21,6 +23,7 @@ from scripts.encoders.queue_state import QueueStore
 from scripts.encoders.recipe import load_approved_recipe
 from scripts.encoders.runs import resolve_run
 from scripts.encoders.recovery import reconcile_queue, restart_from_zero
+from scripts.encoders.succession import load_succession, PREDECESSOR_REVISION
 
 
 CONFIGS = Path(__file__).parent / "configs"
@@ -174,6 +177,8 @@ def build_command(
     )
     if resume:
         command.extend(["--resume", str(resume)])
+    if getattr(args, "succession_receipt", None):
+        command.extend(["--succession-receipt", str(args.succession_receipt)])
     if gate:
         command.extend(["--start-gate", str(gate)])
     return command
@@ -210,6 +215,7 @@ def main() -> None:
     )
     parser.add_argument("--status", action="store_true")
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--succession-receipt", type=Path)
     parser.add_argument("--retry", nargs="*", default=[])
     parser.add_argument(
         "--restart-from-zero",
@@ -255,6 +261,8 @@ def main() -> None:
         parser.error(
             "Choose restart-from-zero or checkpoint retry for each run, not both"
         )
+    if args.succession_receipt and (not args.resume or args.restart_from_zero):
+        parser.error("Source succession requires resume and forbids restart-from-zero")
     if args.retry and not args.resume:
         parser.error("--retry requires explicit --resume")
     for key in (
@@ -265,10 +273,32 @@ def main() -> None:
         "approval",
         "repeat_config_directory",
         "selection_report",
+        "succession_receipt",
     ):
         if getattr(args, key) is not None:
             setattr(args, key, getattr(args, key).resolve())
     verify_code_revision(args.code_revision)
+    succession = load_succession(args.succession_receipt, args.code_revision)
+    if succession:
+        patch = subprocess.check_output(
+            [
+                "git",
+                "diff",
+                "--binary",
+                "--full-index",
+                PREDECESSOR_REVISION,
+                args.code_revision,
+            ]
+        )
+        changed = subprocess.check_output(
+            ["git", "diff", "--name-only", PREDECESSOR_REVISION, args.code_revision],
+            text=True,
+        ).splitlines()
+        if (
+            hashlib.sha256(patch).hexdigest() != succession["source_diff_sha256"]
+            or changed != succession["changed_files"]
+        ):
+            raise ValueError("Succession source diff differs from reviewed receipt")
     config = load_approved_recipe(args.config, args.approval)
     specs = declarations(
         config,
@@ -324,7 +354,23 @@ def main() -> None:
                     else None
                 ),
             }
-            store = QueueStore(args.output, identity, specs, resume=args.resume)
+            store = QueueStore(
+                args.output, identity, specs, resume=args.resume, succession=succession
+            )
+            if succession:
+                entries = store.state.setdefault("source_successions", [])
+                if not any(
+                    entry["receipt_sha256"] == succession["_sha256"]
+                    for entry in entries
+                ):
+                    entry = {
+                        key: succession[key]
+                        for key in ("predecessor_revision", "successor_revision")
+                    }
+                    entry.update(receipt_sha256=succession["_sha256"], time=time.time())
+                    entries.append(entry)
+                    store.save()
+                    store.event("source-succession", **entry)
             store.event(
                 "preflight", inventory=inventory, budget=budget, preparation=prep
             )
@@ -336,7 +382,12 @@ def main() -> None:
                         and run["gpu_uuid"] not in args.gpu_uuids
                     ):
                         raise ValueError("Resume leases omit an original GPU UUID")
-                reconcile_queue(store, leases)
+                reconcile_queue(
+                    store,
+                    leases,
+                    execution_revision=args.code_revision,
+                    succession=succession,
+                )
                 for run_id in args.restart_from_zero:
                     if run_id not in {run["run_id"] for run in store.state["runs"]}:
                         raise ValueError("Unknown restart-from-zero run ID")
@@ -359,6 +410,7 @@ def main() -> None:
                 leases,
                 lambda *values: build_command(args, *values),
                 prepare_validation=validation,
+                execution_revision=args.code_revision,
             )
             stop = StopRequest()
             with stop_signals(stop):

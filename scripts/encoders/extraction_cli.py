@@ -24,6 +24,11 @@ from scripts.encoders.runtime import (
     require_single_gpu,
 )
 from scripts.encoders.transforms import EffectiveEncoder, ZcaTransform
+from scripts.encoders.succession import (
+    load_succession,
+    PREDECESSOR_REVISION,
+    FINALIZE_RUN,
+)
 
 
 def main() -> None:
@@ -35,9 +40,12 @@ def main() -> None:
     parser.add_argument("--split", choices=("train", "validation"), required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--code-revision", required=True)
+    parser.add_argument("--succession-receipt", type=Path)
     parser.add_argument("--transform", type=Path)
     parser.add_argument("--diagnostic", action="store_true")
     args = parser.parse_args()
+    receipt = load_succession(args.succession_receipt, args.code_revision)
+    checkpoint_sha = sha256_file(args.checkpoint)
     state = load_checkpoint(args.checkpoint)
     config = RunConfig.from_dict(state["config"])
     role = state["checkpoint_role"]
@@ -56,9 +64,17 @@ def main() -> None:
         )
     run_identity = state["identity"]["run_identity"]
     if args.code_revision != run_identity["code_revision"]:
-        raise ValueError(
-            "Extraction code revision differs from the training checkpoint"
-        )
+        pin = receipt["runs"][FINALIZE_RUN] if receipt else None
+        if not (
+            pin
+            and args.checkpoint.parent.name == FINALIZE_RUN
+            and run_identity["code_revision"] == PREDECESSOR_REVISION
+            and args.checkpoint.name == pin["checkpoint_name"]
+            and checkpoint_sha == pin["checkpoint_sha256"]
+        ):
+            raise ValueError(
+                "Extraction revision differs without the pinned predecessor final checkpoint"
+            )
     if sha256_file(args.manifest) != run_identity["manifest_sha256"]:
         raise ValueError("Extraction manifest differs from checkpoint")
     configure_process(config)
@@ -70,13 +86,14 @@ def main() -> None:
         raise ValueError("Extraction training rows differ from checkpoint population")
     model = build_encoder(config.seed, config.projector_hidden)
     model.load_state_dict(state["model"])
-    checkpoint_sha = sha256_file(args.checkpoint)
     identity = {
         "checkpoint_sha256": checkpoint_sha,
         "arm": config.arm,
         "checkpoint_role": role,
         "config_hash": config.digest(),
         "code_revision": args.code_revision,
+        "checkpoint_revision": run_identity["code_revision"],
+        "succession_receipt_sha256": receipt["_sha256"] if receipt else None,
         "effective_transform_sha256": None,
     }
     if args.transform:

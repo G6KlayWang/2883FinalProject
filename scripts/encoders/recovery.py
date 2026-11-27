@@ -7,6 +7,7 @@ from scripts.data.file_io import sha256_file, write_json_new
 from scripts.encoders.checkpoints import load_checkpoint
 from scripts.encoders.devices import GpuLeases
 from scripts.encoders.queue_state import QueueStore
+from scripts.encoders.succession import identity_matches, source_record, FINALIZE_RUN
 
 
 def _require_owned_slot(run: dict, leases: GpuLeases) -> None:
@@ -20,7 +21,13 @@ def _require_owned_slot(run: dict, leases: GpuLeases) -> None:
             ) from None
 
 
-def clean_checkpoint(store: QueueStore, run: dict) -> tuple[dict, Path]:
+def clean_checkpoint(
+    store: QueueStore,
+    run: dict,
+    *,
+    execution_revision: str | None = None,
+    succession: dict | None = None,
+) -> tuple[dict, Path]:
     """Validate actual checkpoint contents, not a possibly stale supervisor count."""
     directory = store.root / "runs" / run["run_id"]
     ledger = json.loads((directory / "run_state.json").read_text())
@@ -46,28 +53,75 @@ def clean_checkpoint(store: QueueStore, run: dict) -> tuple[dict, Path]:
     identity = checkpoint["identity"]
     if identity.get("config_hash") != run["config_hash"]:
         raise ValueError("Recovery checkpoint config differs from declared run")
-    saved = identity["run_identity"]
-    expected = {
-        "code_revision": run["code_revision"],
+    record = json.loads((directory / "run_record.json").read_text())
+    expected = {key: record[key] for key in ("config_hash", "run_identity")}
+    expected["run_identity"] = dict(expected["run_identity"])
+    saved = expected["run_identity"]
+    execution_revision = execution_revision or run["code_revision"]
+    saved["code_revision"] = execution_revision
+    if succession and run["run_id"] in succession["runs"]:
+        handover = source_record(succession, run["run_id"])
+        handover_path = directory / "source_succession.json"
+        if handover_path.exists() and json.loads(handover_path.read_text()) != handover:
+            raise ValueError("Recovery source succession differs from receipt")
+        if (
+            run["run_id"] != FINALIZE_RUN
+            and identity["run_identity"]["code_revision"] == execution_revision
+            and not handover_path.exists()
+        ):
+            raise ValueError(
+                "New-revision checkpoint is missing its immutable handover record"
+            )
+        saved["source_succession"] = handover
+    ledger_identity = {key: ledger[key] for key in ("config_hash", "run_identity")}
+    digest = ledger["last_checkpoint_sha256"]
+    if not (
+        identity_matches(identity, expected, digest)
+        and identity_matches(ledger_identity, expected, digest)
+    ):
+        raise ValueError("Recovery checkpoint/ledger/record identity mismatch")
+    controls = {
         "gpu_uuid": run["gpu_uuid"],
         "environment": store.state["identity"]["environment"],
         "manifest_sha256": store.state["identity"]["manifest_sha256"],
     }
-    if any(saved.get(key) != value for key, value in expected.items()):
-        raise ValueError(
-            "Recovery checkpoint source/code/environment/GPU identity mismatch"
-        )
+    if any(saved.get(key) != value for key, value in controls.items()):
+        raise ValueError("Recovery source/environment/GPU identity mismatch")
     return ledger, path
 
 
-def reconcile_queue(store: QueueStore, leases: GpuLeases) -> None:
+def reconcile_queue(
+    store: QueueStore,
+    leases: GpuLeases,
+    *,
+    execution_revision: str | None = None,
+    succession: dict | None = None,
+) -> None:
     """Caller holds all original leases and has checked hardware idle ownership."""
     for run in store.state["runs"]:
         if run["state"] == "pending":
             continue
         _require_owned_slot(run, leases)
         try:
-            ledger, path = clean_checkpoint(store, run)
+            ledger, path = clean_checkpoint(
+                store, run, execution_revision=execution_revision, succession=succession
+            )
+            if succession and run["run_id"] == FINALIZE_RUN:
+                finalization = (
+                    path.parent / f"report-finalization-{succession['_sha256']}.json"
+                )
+                report = json.loads(finalization.read_text())
+                if (
+                    report["checkpoint_sha256"] != ledger["last_checkpoint_sha256"]
+                    or report["completed_updates"] != run["max_updates"]
+                    or report["completed_updates_this_attempt"] != 0
+                    or report["reporting_revision"] != execution_revision
+                    or report["succession_receipt_sha256"] != succession["_sha256"]
+                ):
+                    raise ValueError(
+                        "B requires its verified zero-update finalization report before resume"
+                    )
+                run["report_finalization"] = str(finalization)
         except (OSError, ValueError, KeyError, EOFError) as error:
             run.update(state="failed", recovery_error=str(error), parked=True)
             store.event("recovery-parked", run_id=run["run_id"], reason=str(error))

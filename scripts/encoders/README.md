@@ -372,3 +372,56 @@ Remaining operational work: the coordinator owns cross-directory smoke attempt
 accounting (M5); augmentation/label/cache throughput needs separately authorized
 profiling (M6); final test-set reporting needs new reviewed tooling after choices
 are locked (M7). Development entrypoints continue to refuse test rows.
+
+
+## Reporting repair for the interrupted ba914f6 queue
+
+The reporting revision captures the verified resume checkpoint hash before
+training; retention may then prune that input without breaking final reporting.
+One reviewed predecessor, `ba914f6bb20fb2052f8e63fbc53a8e8b38c73582`, is supported
+only through a coordinator-created, reviewed `--succession-receipt` binding the
+exact four interrupted checkpoints. This is not a general revision override.
+The launcher still verifies the actual checkout and exact binary diff.
+
+First finalize B without training, using its original approved inputs/config and
+GPU UUID, the corrected checkout revision, and its existing final checkpoint:
+
+```sh
+CUDA_VISIBLE_DEVICES="$B_GPU_UUID" "$PY" -m scripts.encoders.train \
+  --config "$APPROVED_CONFIG" --candidate B-rho2.5-seed0 \
+  --hdf5 "$H5" --manifest "$MAN" --cache "$CACHE_ROOT/train-phase0" \
+  --output "$QUEUE/runs/B-rho2.5-seed0" --code-revision "$NEW_SHA" \
+  --resume "$QUEUE/runs/B-rho2.5-seed0/step-030000.pt" --stop-at 30000 \
+  --succession-receipt "$SUCCESSION_RECEIPT" --finalize-only
+```
+
+This writes only `report-finalization-<receipt SHA256>.json`: zero updates, actual
+reporting/checkpoint revisions, unchanged ledger time, null unavailable telemetry,
+and the failed-attempt log pointer. The stale `training_report.json`, failed
+attempts, ledger and checkpoint remain unchanged. Then run the original launcher
+command with `--code-revision "$NEW_SHA" --resume --succession-receipt
+"$SUCCESSION_RECEIPT"`. Original physical GPU assignments still apply. No capacity
+assessment is rerun or rewritten. Queue/run historical revisions stay unchanged;
+a succession entry outside queue identity records the execution revision.
+A/C/Aprime write a new, immutable `source_succession.json` after verified restore;
+every subsequent checkpoint carries it. Old-form identity acceptance applies
+only to the receipt's exact checkpoint hash, with all other fields equal.
+B remains entirely old-revision training; A/C/Aprime transition after updates
+29307/29035/28294, and the remaining candidates train under the corrected revision.
+Extraction of B uses the same receipt and records both revisions.
+
+Receipt version1 keys: `predecessor_revision`, `successor_revision`,
+`source_diff_sha256` (exact `git diff --binary --full-index OLD NEW` bytes),
+`changed_files` (ordered `git diff --name-only OLD NEW` lines),
+`queue_identity_sha256`, `queue_state_sha256`, `queue_record_sha256`,
+`capacity_sha256`, `rollback_receipts` (two `{path, sha256}` objects),
+`failure_evidence` (supervisor log path and queue exit2), and `runs` keyed by the
+four exact run IDs. Each run binds `checkpoint_name`, `checkpoint_sha256`,
+`checkpoint_bytes`, `checkpoint_role`, `completed_updates`, `attempted_updates`,
+`model_seconds`, `config_hash`, `gpu_uuid`, `history_lines`, `history_sha256`,
+`ledger_sha256`, `run_record_sha256`, and `failed_attempt_log`.
+Canonical object hashes use `scripts.encoders.artifacts.identity_digest`;
+file hashes use raw bytes. Before publication the operational receipt creator
+must verify all four checkpoint binaries/CPU metadata, original identities,
+counts/cursors/RNG state, and finite contiguous histories. No checkpoint is
+rewritten. The receipt itself is hashed as raw bytes and never edited.
